@@ -1,0 +1,70 @@
+import { PaymentMethod } from '@prisma/client';
+
+export interface DailyRegisterDetailResponse {
+  id: string;
+  serviceId: string;
+  serviceName: string;
+  unitPrice: number;
+  commissionRate: number;
+  quantity: number;
+  lineSubtotal: number;
+  lineCommission: number;
+}
+
+export interface DailyRegisterResponse {
+  id: string;
+  clientName: string;
+  paymentMethod: PaymentMethod;
+  subtotalBase: number;
+  discountAmount: number;
+  cardFeeAmount: number;
+  totalPaid: number;
+  totalCommission: number;
+  mesaUserId: string;
+  mesaUserName?: string;
+  createdById: string;
+  createdByName?: string;
+  createdAt: Date;
+  updatedAt: Date;
+  details: DailyRegisterDetailResponse[];
+}
+
+export interface PaginatedDailyRegisters {
+  data: DailyRegisterResponse[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
+export interface ListDailyRegistersFilters {
+  date?: string;
+  mesaUserId?: string;
+  paymentMethod?: PaymentMethod;
+  page: number;
+  limit: number;
+}
+
+export interface CreateDailyRegisterDetailData {
+  serviceId: string;
+  unitPrice: number;
+  commissionRate: number;
+  quantity: number;
+  lineSubtotal: number;
+  lineCommission: number;
+}
+
+export interface CreateDailyRegisterData {
+  clientName: string;
+  paymentMethod: PaymentMethod;
+  subtotalBase: number;
+  discountAmount: number;
+  cardFeeAmount: number;
+  totalPaid: number;
+  totalCommission: number;
+  mesaUserId: string;
+  createdById: string;
+  details: CreateDailyRegisterDetailData[];
+}

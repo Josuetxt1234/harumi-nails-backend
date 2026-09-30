@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,4 +5,312 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// 1. Users
+model User {
+  id        String  @id @default(uuid())
+  firstName String
+  lastName  String
+  // Uniqueness for active rows only: see prisma/partial-unique-indexes.sql
+  email     String
+  phone     String?
+  password  String
+  isActive  Boolean @default(true)
+  avatarUrl String?
+
+  // Soft delete & base audit
+  isDeleted Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  // Audit relations on other users
+  createdById  String?
+  createdBy    User?  @relation("UserCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdUsers User[] @relation("UserCreatedBy")
+
+  updatedById  String?
+  updatedBy    User?  @relation("UserUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  updatedUsers User[] @relation("UserUpdatedBy")
+
+  deletedById  String?
+  deletedBy    User?  @relation("UserDeletedBy", fields: [deletedById], references: [id], onDelete: Restrict)
+  deletedUsers User[] @relation("UserDeletedBy")
+
+  roles    UserRole[]
+  sessions Session[]
+
+  // Audit actions performed by this user
+  createdRoles       Role[]       @relation("RoleCreatedBy")
+  updatedRoles       Role[]       @relation("RoleUpdatedBy")
+  deletedRoles       Role[]       @relation("RoleDeletedBy")
+
+  createdPermissions Permission[] @relation("PermissionCreatedBy")
+  updatedPermissions Permission[] @relation("PermissionUpdatedBy")
+  deletedPermissions Permission[] @relation("PermissionDeletedBy")
+
+  assignedUserRoles UserRole[] @relation("UserRoleAssignedBy")
+  revokedUserRoles  UserRole[] @relation("UserRoleRevokedBy")
+
+  assignedRolePermissions RolePermission[] @relation("RolePermissionAssignedBy")
+  revokedRolePermissions  RolePermission[] @relation("RolePermissionRevokedBy")
+
+  createdSessions Session[] @relation("SessionCreatedBy")
+  updatedSessions Session[] @relation("SessionUpdatedBy")
+  deletedSessions Session[] @relation("SessionDeletedBy")
+
+  mesaWorkRegisters    DailyRegister[] @relation("MesaWorkRegisters")
+  createdWorkRegisters DailyRegister[] @relation("WorkRegisterCreatedBy")
+  deletedWorkRegisters DailyRegister[] @relation("WorkRegisterDeletedBy")
+  createdServices      Service[]       @relation("ServiceCreatedBy")
+  updatedServices      Service[]       @relation("ServiceUpdatedBy")
+  deletedServices      Service[]       @relation("ServiceDeletedBy")
+
+  @@index([email])
+  @@index([isDeleted])
+  @@index([isActive])
+  @@index([isDeleted, isActive])
+  @@map("users")
+}
+
+// 2. Roles
+model Role {
+  id          String  @id @default(uuid())
+  // Uniqueness for active rows only: see prisma/partial-unique-indexes.sql
+  name        String
+  description String?
+
+  // Soft delete & audit
+  isDeleted Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  createdById String?
+  createdBy   User? @relation("RoleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  updatedById String?
+  updatedBy   User? @relation("RoleUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  deletedById String?
+  deletedBy   User? @relation("RoleDeletedBy", fields: [deletedById], references: [id], onDelete: Restrict)
+
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@index([name])
+  @@index([isDeleted])
+  @@map("roles")
+}
+
+// 3. Permissions
+model Permission {
+  id          String  @id @default(uuid())
+  // Uniqueness for active rows only: see prisma/partial-unique-indexes.sql
+  name        String
+  description String?
+
+  // Soft delete & audit
+  isDeleted Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  createdById String?
+  createdBy   User? @relation("PermissionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  updatedById String?
+  updatedBy   User? @relation("PermissionUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  deletedById String?
+  deletedBy   User? @relation("PermissionDeletedBy", fields: [deletedById], references: [id], onDelete: Restrict)
+
+  roles RolePermission[]
+
+  @@index([name])
+  @@index([isDeleted])
+  @@map("permissions")
+}
+
+// 4. Junction: User <-> Role (assignment / revocation history)
+// Active uniqueness (userId, roleId) WHERE isDeleted = false: see prisma/partial-unique-indexes.sql
+// Preferred reassignment flow: reactivate the soft-deleted row (isDeleted = false) and bump updatedAt.
+model UserRole {
+  id     String @id @default(uuid())
+  userId String
+  roleId String
+
+  // Soft delete & assignment audit
+  isDeleted  Boolean   @default(false)
+  assignedAt DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  assignedById String?
+  assignedBy   User? @relation("UserRoleAssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
+
+  revokedById String?
+  revokedBy   User? @relation("UserRoleRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([roleId])
+  @@index([isDeleted])
+  @@index([userId, isDeleted])
+  @@index([roleId, isDeleted])
+  @@map("user_roles")
+}
+
+// 5. Junction: Role <-> Permission (assignment / revocation history)
+// Active uniqueness (roleId, permissionId) WHERE isDeleted = false: see prisma/partial-unique-indexes.sql
+// Preferred reassignment flow: reactivate the soft-deleted row (isDeleted = false) and bump updatedAt.
+model RolePermission {
+  id           String @id @default(uuid())
+  roleId       String
+  permissionId String
+
+  // Soft delete & assignment audit
+  isDeleted  Boolean   @default(false)
+  assignedAt DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  assignedById String?
+  assignedBy   User? @relation("RolePermissionAssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
+
+  revokedById String?
+  revokedBy   User? @relation("RolePermissionRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@index([roleId])
+  @@index([permissionId])
+  @@index([isDeleted])
+  @@index([roleId, isDeleted])
+  @@index([permissionId, isDeleted])
+  @@map("role_permissions")
+}
+
+// 6. Sessions (multi-device auth)
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  refreshToken String   @unique
+  userAgent    String?
+  ipAddress    String?
+  expiresAt    DateTime
+  isRevoked    Boolean  @default(false)
+
+  // Soft delete & audit
+  isDeleted Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  createdById String?
+  createdBy   User? @relation("SessionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  updatedById String?
+  updatedBy   User? @relation("SessionUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  deletedById String?
+  deletedBy   User? @relation("SessionDeletedBy", fields: [deletedById], references: [id], onDelete: Restrict)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([userId, isDeleted])
+  @@index([userId, isRevoked])
+  @@index([expiresAt])
+  @@index([isDeleted])
+  @@map("sessions")
+}
+
+// 7. Salon services catalog
+model Service {
+  id                   String   @id @default(uuid())
+  name                 String
+  category             String
+  price                Decimal  @db.Decimal(10, 2)
+  commissionPercentage Decimal  @db.Decimal(5, 2) @default(50.00)
+  isActive             Boolean  @default(true)
+  isDeleted            Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  deletedAt            DateTime?
+
+  createdById String?
+  createdBy   User? @relation("ServiceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedById String?
+  updatedBy   User? @relation("ServiceUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  deletedById String?
+  deletedBy   User? @relation("ServiceDeletedBy", fields: [deletedById], references: [id], onDelete: Restrict)
+
+  items DailyRegisterDetail[]
+
+  @@index([category])
+  @@index([isDeleted])
+  @@index([isActive])
+  @@map("services")
+}
+
+enum PaymentMethod {
+  CASH
+  TRANSFER
+  CARD
+}
+
+// 8. Daily work registers
+model DailyRegister {
+  id              String        @id @default(uuid())
+  clientName      String
+  paymentMethod   PaymentMethod
+  subtotalBase    Decimal       @db.Decimal(10, 2)
+  discountAmount  Decimal       @db.Decimal(10, 2) @default(0.00)
+  cardFeeAmount   Decimal       @db.Decimal(10, 2) @default(0.00)
+  totalPaid       Decimal       @db.Decimal(10, 2)
+  totalCommission Decimal       @db.Decimal(10, 2)
+
+  mesaUserId String
+  mesaUser   User   @relation("MesaWorkRegisters", fields: [mesaUserId], references: [id], onDelete: Restrict)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+
+  createdById String
+  createdBy   User    @relation("WorkRegisterCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  deletedById String?
+  deletedBy   User?   @relation("WorkRegisterDeletedBy", fields: [deletedById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  details DailyRegisterDetail[]
+
+  @@index([mesaUserId])
+  @@index([isDeleted])
+  @@index([createdAt])
+  @@index([paymentMethod])
+  @@map("daily_registers")
+}
+
+model DailyRegisterDetail {
+  id              String @id @default(uuid())
+  dailyRegisterId String
+  dailyRegister   DailyRegister @relation(fields: [dailyRegisterId], references: [id], onDelete: Cascade)
+  serviceId       String
+  service         Service @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  unitPrice       Decimal @db.Decimal(10, 2)
+  commissionRate  Decimal @db.Decimal(5, 2)
+  quantity        Int     @default(1)
+  lineSubtotal    Decimal @db.Decimal(10, 2)
+  lineCommission  Decimal @db.Decimal(10, 2)
+
+  @@index([dailyRegisterId])
+  @@index([serviceId])
+  @@map("daily_register_details")
 }
