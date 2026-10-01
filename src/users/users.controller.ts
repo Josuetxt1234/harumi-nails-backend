@@ -143,6 +143,7 @@ export class UsersController {
       id,
       changePasswordDto,
       actor.id,
+      actor.roles,
     );
   }
 
@@ -171,7 +172,7 @@ export class UsersController {
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() actor: AuthenticatedUser,
   ): Promise<void> {
-    await this.usersService.deleteUser(id, actor.id);
+    await this.usersService.deleteUser(id, actor.id, actor.roles);
   }
 
   @Post(':id/roles')

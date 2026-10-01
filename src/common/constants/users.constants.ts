@@ -8,6 +8,7 @@ export const USERS_ERROR_MESSAGES = {
   INVALID_ROLE_ASSIGNMENT: 'You are not allowed to assign this role.',
   CANNOT_MANAGE_USER: 'You are not allowed to manage this user.',
   INVALID_CURRENT_PASSWORD: 'Current password is incorrect.',
-  CANNOT_UPDATE_OWN_ROLE: 'You cannot change your own role.',
-  CANNOT_UPDATE_OWN_STATUS: 'You cannot change your own account status.',
+  ROLE_REQUIRED: 'At least one role must be assigned.',
+  CANNOT_MODIFY_LAST_SUPER_ADMIN:
+    'The last active SUPER_ADMIN cannot be deleted, deactivated, or have that role revoked.',
 } as const;

@@ -82,10 +82,6 @@ export class RolesService {
     await this.rolesRepository.softDelete(roleId, actorUserId);
   }
 
-  async assertRoleExists(roleId: string): Promise<RoleSummary> {
-    return this.getActiveRoleById(roleId);
-  }
-
   async assertRoleNameIsAvailable(name: string): Promise<void> {
     const existingRole = await this.rolesRepository.findActiveByName(name);
 

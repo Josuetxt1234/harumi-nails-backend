@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { normalizeEmail } from '../common/utils/normalize-email.util';
 import {
   CreateUserData,
   ListUsersFilters,
@@ -22,7 +21,7 @@ export class UsersRepository {
   async findActiveByEmail(email: string): Promise<UserWithRoles | null> {
     const user = await this.prisma.user.findFirst({
       where: {
-        email: normalizeEmail(email),
+        email,
         isDeleted: false,
       },
       include: this.userRolesInclude(),
@@ -34,7 +33,7 @@ export class UsersRepository {
   async emailExistsForActiveUser(email: string): Promise<boolean> {
     const user = await this.prisma.user.findFirst({
       where: {
-        email: normalizeEmail(email),
+        email,
         isDeleted: false,
       },
       select: { id: true },
@@ -161,12 +160,67 @@ export class UsersRepository {
       data: {
         firstName: data.firstName,
         lastName: data.lastName,
-        email: normalizeEmail(data.email),
+        email: data.email,
         password: data.password,
         phone: data.phone,
         avatarUrl: data.avatarUrl,
         isActive: data.isActive ?? true,
         createdById: data.createdById,
+      },
+    });
+  }
+
+  async createWithRoles(
+    data: CreateUserData,
+    roleIds: string[],
+  ): Promise<UserDetailBase> {
+    const uniqueRoleIds = [...new Set(roleIds)];
+
+    return this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          firstName: data.firstName,
+          lastName: data.lastName,
+          email: data.email,
+          password: data.password,
+          phone: data.phone,
+          avatarUrl: data.avatarUrl,
+          isActive: data.isActive ?? true,
+          createdById: data.createdById,
+          roles: {
+            create: uniqueRoleIds.map((roleId) => ({
+              roleId,
+              assignedById: data.createdById,
+            })),
+          },
+        },
+        include: this.userRolesInclude(),
+      });
+
+      return this.mapToUserDetail(user);
+    });
+  }
+
+  async deleteAllSessionsForUser(userId: string): Promise<void> {
+    await this.prisma.session.deleteMany({
+      where: { userId },
+    });
+  }
+
+  async countActiveUsersWithRoleName(roleName: string): Promise<number> {
+    return this.prisma.user.count({
+      where: {
+        isDeleted: false,
+        isActive: true,
+        roles: {
+          some: {
+            isDeleted: false,
+            role: {
+              name: roleName,
+              isDeleted: false,
+            },
+          },
+        },
       },
     });
   }

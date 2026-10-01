@@ -1,13 +1,14 @@
 import { Transform } from 'class-transformer';
 import {
+  ArrayMinSize,
   IsBoolean,
   IsEmail,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
-  MinLength,
 } from 'class-validator';
+import { IsPassword } from '../../common/decorators/is-password.decorator';
 
 function parseRoleIds(value: unknown): string[] | undefined {
   if (value === undefined || value === null || value === '') {
@@ -44,23 +45,22 @@ export class CreateUserDto {
   @IsNotEmpty({ message: 'Last name is required.' })
   lastName!: string;
 
+  @Transform(({ value }) => value?.trim().toLowerCase())
   @IsEmail({}, { message: 'Email must be a valid email address.' })
   @IsNotEmpty({ message: 'Email is required.' })
   email!: string;
 
-  @IsString({ message: 'Password must be a string.' })
-  @IsNotEmpty({ message: 'Password is required.' })
-  @MinLength(8, { message: 'Password must be at least 8 characters long.' })
+  @IsPassword()
   password!: string;
 
   @IsOptional()
   @IsString({ message: 'Phone must be a string.' })
   phone?: string;
 
-  @IsOptional()
-  @Transform(({ value }) => parseRoleIds(value))
+  @Transform(({ value }) => parseRoleIds(value) ?? [])
+  @ArrayMinSize(1, { message: 'At least one role must be assigned.' })
   @IsUUID('4', { each: true, message: 'Each role ID must be a valid UUID.' })
-  roleIds?: string[];
+  roleIds!: string[];
 
   @IsOptional()
   @Transform(({ value }) => {

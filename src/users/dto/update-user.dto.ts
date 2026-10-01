@@ -1,8 +1,5 @@
-import {
-  IsOptional,
-  IsString,
-  MinLength,
-} from 'class-validator';
+import { IsOptional, IsString } from 'class-validator';
+import { IsPassword } from '../../common/decorators/is-password.decorator';
 
 export class UpdateUserDto {
   @IsOptional()
@@ -17,8 +14,6 @@ export class UpdateUserDto {
   @IsString({ message: 'Phone must be a string.' })
   phone?: string;
 
-  @IsOptional()
-  @IsString({ message: 'Password must be a string.' })
-  @MinLength(8, { message: 'Password must be at least 8 characters long.' })
+  @IsPassword({ optional: true })
   password?: string;
 }

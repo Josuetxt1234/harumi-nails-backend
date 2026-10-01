@@ -49,6 +49,18 @@ export class PermissionsRepository {
     });
   }
 
+  async findActiveRoleById(roleId: string): Promise<{ id: string } | null> {
+    return this.prisma.role.findFirst({
+      where: {
+        id: roleId,
+        isDeleted: false,
+      },
+      select: {
+        id: true,
+      },
+    });
+  }
+
   async resolvePermissionNamesForUser(userId: string): Promise<string[]> {
     const assignments = await this.prisma.rolePermission.findMany({
       where: {

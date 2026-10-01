@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PERMISSIONS_ERROR_MESSAGES } from '../common/constants/permissions-errors.constants';
+import { ROLES_ERROR_MESSAGES } from '../common/constants/roles-errors.constants';
 import { AssignPermissionDto } from './dto/assign-permission.dto';
 import {
   PermissionSummary,
@@ -42,6 +43,7 @@ export class PermissionsService {
     assignPermissionDto: AssignPermissionDto,
     actorUserId: string,
   ): Promise<RolePermissionSummary[]> {
+    await this.assertActiveRoleExists(roleId);
     await this.getActivePermissionById(assignPermissionDto.permissionId);
 
     const activeAssignment =
@@ -83,6 +85,7 @@ export class PermissionsService {
     permissionId: string,
     actorUserId: string,
   ): Promise<RolePermissionSummary[]> {
+    await this.assertActiveRoleExists(roleId);
     await this.getActivePermissionById(permissionId);
 
     const activeAssignment =
@@ -103,5 +106,13 @@ export class PermissionsService {
     );
 
     return this.getPermissionsForRole(roleId);
+  }
+
+  private async assertActiveRoleExists(roleId: string): Promise<void> {
+    const role = await this.permissionsRepository.findActiveRoleById(roleId);
+
+    if (!role) {
+      throw new NotFoundException(ROLES_ERROR_MESSAGES.ROLE_NOT_FOUND);
+    }
   }
 }

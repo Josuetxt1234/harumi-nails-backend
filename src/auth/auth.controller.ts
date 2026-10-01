@@ -9,6 +9,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { OptionalAuth } from '../common/decorators/optional-auth.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { AuthService } from './auth.service';
@@ -34,7 +35,7 @@ export class AuthController {
     return this.authService.refresh(refreshTokenDto.refreshToken);
   }
 
-  @Public()
+  @OptionalAuth()
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(

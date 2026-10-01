@@ -9,7 +9,6 @@ import {
 import { AUTH_ERROR_MESSAGES } from '../common/constants/auth.constants';
 import { SYSTEM_ROLES } from '../common/constants/roles.constants';
 import { USERS_ERROR_MESSAGES } from '../common/constants/users.constants';
-import { normalizeEmail } from '../common/utils/normalize-email.util';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { HashingService } from '../hashing/hashing.service';
 import { RolesService } from '../roles/roles.service';
@@ -39,7 +38,7 @@ export class UsersService {
   ) {}
 
   async findActiveByEmail(email: string): Promise<UserWithRoles | null> {
-    return this.usersRepository.findActiveByEmail(normalizeEmail(email));
+    return this.usersRepository.findActiveByEmail(email);
   }
 
   async getActiveProfileById(userId: string): Promise<UserProfile | null> {
@@ -118,7 +117,9 @@ export class UsersService {
     userId: string,
     actorRoles: string[],
   ): Promise<UserDetail> {
-    return this.assertActorCanManageTargetUser(actorRoles, userId);
+    const targetUser = await this.getUserById(userId);
+    this.assertActorCanManageTargetUser({ roles: actorRoles }, targetUser);
+    return targetUser;
   }
 
   async createUser(
@@ -127,15 +128,17 @@ export class UsersService {
     actorRoles: string[],
     avatarFile?: Express.Multer.File,
   ): Promise<UserDetail> {
+    const roleIds = [...new Set(createUserDto.roleIds ?? [])];
+
+    if (roleIds.length === 0) {
+      throw new BadRequestException(USERS_ERROR_MESSAGES.ROLE_REQUIRED);
+    }
+
     await this.assertEmailIsAvailable(createUserDto.email);
 
-    if (createUserDto.roleIds?.length) {
-      for (const roleId of createUserDto.roleIds) {
-        const role = await this.rolesService.getActiveRoleById(roleId);
-        this.assertActorCanAssignRole(actorRoles, role.name);
-      }
-    } else if (this.isAdminOnly(actorRoles)) {
-      throw new BadRequestException('At least one role must be assigned.');
+    for (const roleId of roleIds) {
+      const role = await this.rolesService.getActiveRoleById(roleId);
+      this.assertActorCanAssignRole(actorRoles, role.name);
     }
 
     const hashedPassword = await this.hashingService.hashPassword(
@@ -143,45 +146,41 @@ export class UsersService {
     );
 
     let avatarUrl: string | undefined;
+    let uploadedPublicId: string | undefined;
 
     if (avatarFile) {
       const uploadResult = await this.cloudinaryService.uploadImage(avatarFile);
       avatarUrl = uploadResult.secureUrl;
+      uploadedPublicId = uploadResult.publicId;
     }
 
-    const createdUser = await this.usersRepository.create({
-      firstName: createUserDto.firstName.trim(),
-      lastName: createUserDto.lastName.trim(),
-      email: createUserDto.email,
-      password: hashedPassword,
-      phone: createUserDto.phone?.trim(),
-      avatarUrl,
-      isActive: createUserDto.isActive,
-      createdById: actorUserId,
-    });
+    try {
+      const createdUser = await this.usersRepository.createWithRoles(
+        {
+          firstName: createUserDto.firstName.trim(),
+          lastName: createUserDto.lastName.trim(),
+          email: createUserDto.email,
+          password: hashedPassword,
+          phone: createUserDto.phone?.trim(),
+          avatarUrl,
+          isActive: createUserDto.isActive,
+          createdById: actorUserId,
+        },
+        roleIds,
+      );
 
-    if (createUserDto.roleIds?.length) {
-      for (const roleId of createUserDto.roleIds) {
-        await this.assignRoleToUser(
-          createdUser.id,
-          roleId,
-          actorUserId,
-          actorRoles,
-        );
+      return this.getUserById(createdUser.id);
+    } catch (error) {
+      if (uploadedPublicId) {
+        try {
+          await this.cloudinaryService.deleteImage(uploadedPublicId);
+        } catch {
+          // DB failure is the source of truth; avatar cleanup is best-effort.
+        }
       }
-    } else if (this.isAdminOnly(actorRoles)) {
-      const mesaRole = await this.rolesService.getActiveRoleByName(
-        SYSTEM_ROLES.MESA,
-      );
-      await this.assignRoleToUser(
-        createdUser.id,
-        mesaRole.id,
-        actorUserId,
-        actorRoles,
-      );
-    }
 
-    return this.getUserById(createdUser.id);
+      throw error;
+    }
   }
 
   async updateUser(
@@ -191,10 +190,7 @@ export class UsersService {
     actorRoles: string[],
     avatarFile?: Express.Multer.File,
   ): Promise<UserDetail> {
-    const currentUser = await this.assertActorCanManageTargetUser(
-      actorRoles,
-      userId,
-    );
+    const currentUser = await this.getUserByIdForActor(userId, actorRoles);
 
     const updateData: {
       firstName?: string;
@@ -315,14 +311,16 @@ export class UsersService {
       password: hashedPassword,
       updatedById: userId,
     });
+    await this.usersRepository.deleteAllSessionsForUser(userId);
   }
 
   async forceChangePassword(
     userId: string,
     changePasswordDto: ChangePasswordDto,
     actorUserId: string,
+    actorRoles: string[],
   ): Promise<void> {
-    await this.getUserById(userId);
+    await this.getUserByIdForActor(userId, actorRoles);
 
     const hashedPassword = await this.hashingService.hashPassword(
       changePasswordDto.newPassword,
@@ -332,6 +330,7 @@ export class UsersService {
       password: hashedPassword,
       updatedById: actorUserId,
     });
+    await this.usersRepository.deleteAllSessionsForUser(userId);
   }
 
   async activateUser(
@@ -339,8 +338,7 @@ export class UsersService {
     actorUserId: string,
     actorRoles: string[] = [SYSTEM_ROLES.SUPER_ADMIN],
   ): Promise<UserDetail> {
-    await this.assertActorCanManageTargetUser(actorRoles, userId);
-    await this.getUserById(userId);
+    await this.getUserByIdForActor(userId, actorRoles);
     await this.usersRepository.setActiveState(userId, true, actorUserId);
     return this.getUserById(userId);
   }
@@ -351,16 +349,23 @@ export class UsersService {
     actorRoles: string[] = [SYSTEM_ROLES.SUPER_ADMIN],
   ): Promise<UserDetail> {
     this.assertUserCanManageTarget(actorUserId, userId, 'deactivate');
-    await this.assertActorCanManageTargetUser(actorRoles, userId);
-    await this.getUserById(userId);
+    const targetUser = await this.getUserByIdForActor(userId, actorRoles);
+    await this.assertNotLastActiveSuperAdmin(targetUser);
     await this.usersRepository.setActiveState(userId, false, actorUserId);
+    await this.usersRepository.deleteAllSessionsForUser(userId);
     return this.getUserById(userId);
   }
 
-  async deleteUser(userId: string, actorUserId: string): Promise<void> {
+  async deleteUser(
+    userId: string,
+    actorUserId: string,
+    actorRoles: string[],
+  ): Promise<void> {
     this.assertUserCanManageTarget(actorUserId, userId, 'delete');
-    const user = await this.getUserById(userId);
+    const user = await this.getUserByIdForActor(userId, actorRoles);
+    await this.assertNotLastActiveSuperAdmin(user);
     await this.usersRepository.softDelete(userId, actorUserId);
+    await this.usersRepository.deleteAllSessionsForUser(userId);
 
     const publicId = this.cloudinaryService.extractPublicIdFromUrl(
       user.avatarUrl,
@@ -381,7 +386,7 @@ export class UsersService {
     actorUserId: string,
     actorRoles: string[],
   ): Promise<UserDetail> {
-    await this.assertActorCanManageTargetUser(actorRoles, userId);
+    await this.getUserByIdForActor(userId, actorRoles);
 
     const role = await this.rolesService.getActiveRoleById(roleId);
     this.assertActorCanAssignRole(actorRoles, role.name);
@@ -420,8 +425,12 @@ export class UsersService {
     actorUserId: string,
     actorRoles: string[],
   ): Promise<UserDetail> {
-    await this.assertActorCanManageTargetUser(actorRoles, userId);
-    await this.rolesService.getActiveRoleById(roleId);
+    const targetUser = await this.getUserByIdForActor(userId, actorRoles);
+    const role = await this.rolesService.getActiveRoleById(roleId);
+
+    if (role.name === SYSTEM_ROLES.SUPER_ADMIN) {
+      await this.assertNotLastActiveSuperAdmin(targetUser);
+    }
 
     const activeAssignment = await this.usersRepository.findActiveRoleAssignment(
       userId,
@@ -501,29 +510,50 @@ export class UsersService {
     }
   }
 
-  private async assertActorCanManageTargetUser(
-    actorRoles: string[],
-    targetUserId: string,
-  ): Promise<UserDetail> {
-    const targetUser = await this.getUserById(targetUserId);
-
-    if (actorRoles.includes(SYSTEM_ROLES.SUPER_ADMIN)) {
-      return targetUser;
+  assertActorCanManageTargetUser(
+    actor: { roles: string[] },
+    targetUser: Pick<UserDetail, 'id' | 'roles'>,
+  ): void {
+    if (actor.roles.includes(SYSTEM_ROLES.SUPER_ADMIN)) {
+      return;
     }
 
-    if (this.isAdminOnly(actorRoles)) {
-      const canManage = targetUser.roles.every(
-        (role) => role === SYSTEM_ROLES.MESA,
-      );
+    if (this.isAdminOnly(actor.roles)) {
+      const canManage =
+        targetUser.roles.length > 0 &&
+        targetUser.roles.every((role) => role === SYSTEM_ROLES.MESA);
 
-      if (!canManage || targetUser.roles.length === 0) {
+      if (!canManage) {
         throw new ForbiddenException(USERS_ERROR_MESSAGES.CANNOT_MANAGE_USER);
       }
 
-      return targetUser;
+      return;
     }
 
     throw new ForbiddenException(USERS_ERROR_MESSAGES.CANNOT_MANAGE_USER);
+  }
+
+  private async assertNotLastActiveSuperAdmin(
+    targetUser: Pick<UserDetail, 'roles' | 'isActive'>,
+  ): Promise<void> {
+    if (!targetUser.roles.includes(SYSTEM_ROLES.SUPER_ADMIN)) {
+      return;
+    }
+
+    if (!targetUser.isActive) {
+      return;
+    }
+
+    const activeSuperAdmins =
+      await this.usersRepository.countActiveUsersWithRoleName(
+        SYSTEM_ROLES.SUPER_ADMIN,
+      );
+
+    if (activeSuperAdmins <= 1) {
+      throw new ForbiddenException(
+        USERS_ERROR_MESSAGES.CANNOT_MODIFY_LAST_SUPER_ADMIN,
+      );
+    }
   }
 
   private isAdminOnly(actorRoles: string[]): boolean {
@@ -566,7 +596,7 @@ export class UsersService {
 
   private async assertEmailIsAvailable(email: string): Promise<void> {
     const emailExists = await this.usersRepository.emailExistsForActiveUser(
-      normalizeEmail(email),
+      email,
     );
 
     if (emailExists) {
