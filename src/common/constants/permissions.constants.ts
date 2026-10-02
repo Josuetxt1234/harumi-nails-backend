@@ -27,6 +27,7 @@ export const PERMISSIONS = {
   PERMISSIONS_ASSIGN_TO_ROLE: 'permissions.assign_to_role',
 
   SERVICES_LIST: 'services.list',
+  SERVICES_READ: 'services.read',
   SERVICES_CREATE: 'services.create',
   SERVICES_UPDATE: 'services.update',
   SERVICES_DELETE: 'services.delete',
@@ -35,6 +36,12 @@ export const PERMISSIONS = {
   DAILY_REGISTERS_LIST: 'daily_registers.list',
   DAILY_REGISTERS_READ: 'daily_registers.read',
   DAILY_REGISTERS_VOID: 'daily_registers.void',
+
+  ADVANCES_CREATE: 'advances.create',
+  ADVANCES_LIST: 'advances.list',
+  ADVANCES_READ: 'advances.read',
+  ADVANCES_CANCEL: 'advances.cancel',
+  ADVANCES_DELETE: 'advances.delete',
 
   APPOINTMENTS_LIST: 'appointments.list',
   APPOINTMENTS_READ: 'appointments.read',
@@ -50,16 +57,22 @@ export const PERMISSIONS = {
 
   INVENTORY_LIST: 'inventory.list',
   INVENTORY_READ: 'inventory.read',
+  INVENTORY_CREATE: 'inventory.create',
   INVENTORY_UPDATE: 'inventory.update',
   INVENTORY_REQUEST_RESTOCK: 'inventory.request_restock',
 
   PAYROLL_LIST: 'payroll.list',
   PAYROLL_READ: 'payroll.read',
+  PAYROLL_CREATE: 'payroll.create',
+  PAYROLL_CLOSE: 'payroll.close',
   PAYROLL_CALCULATE: 'payroll.calculate',
   PAYROLL_APPROVE: 'payroll.approve',
 
   AUDIT_LIST: 'audit.list',
   AUDIT_READ: 'audit.read',
+
+  NOTIFICATIONS_LIST: 'notifications.list',
+  NOTIFICATIONS_UPDATE: 'notifications.update',
 } as const;
 
 export type PermissionName = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -88,12 +101,41 @@ const ADMIN_ROLE_PERMISSIONS: PermissionName[] = [
   PERMISSIONS.ROLES_READ,
 ];
 
-const ADMIN_DAILY_REGISTER_PERMISSIONS: PermissionName[] = [
+const ADMIN_SERVICE_PERMISSIONS: PermissionName[] = [
   PERMISSIONS.SERVICES_LIST,
+  PERMISSIONS.SERVICES_READ,
+  PERMISSIONS.SERVICES_CREATE,
+  PERMISSIONS.SERVICES_UPDATE,
+  PERMISSIONS.SERVICES_DELETE,
+];
+
+const ADMIN_DAILY_REGISTER_PERMISSIONS: PermissionName[] = [
   PERMISSIONS.DAILY_REGISTERS_CREATE,
   PERMISSIONS.DAILY_REGISTERS_LIST,
   PERMISSIONS.DAILY_REGISTERS_READ,
   PERMISSIONS.DAILY_REGISTERS_VOID,
+];
+
+const ADMIN_ADVANCE_PERMISSIONS: PermissionName[] = [
+  PERMISSIONS.ADVANCES_CREATE,
+  PERMISSIONS.ADVANCES_LIST,
+  PERMISSIONS.ADVANCES_READ,
+  PERMISSIONS.ADVANCES_CANCEL,
+  PERMISSIONS.ADVANCES_DELETE,
+];
+
+const ADMIN_INVENTORY_PERMISSIONS: PermissionName[] = [
+  PERMISSIONS.INVENTORY_LIST,
+  PERMISSIONS.INVENTORY_READ,
+  PERMISSIONS.INVENTORY_CREATE,
+  PERMISSIONS.INVENTORY_UPDATE,
+];
+
+const ADMIN_PAYROLL_PERMISSIONS: PermissionName[] = [
+  PERMISSIONS.PAYROLL_LIST,
+  PERMISSIONS.PAYROLL_READ,
+  PERMISSIONS.PAYROLL_CREATE,
+  PERMISSIONS.PAYROLL_CLOSE,
 ];
 
 export const ROLE_PERMISSION_MAP: Record<string, PermissionName[]> = {
@@ -102,12 +144,20 @@ export const ROLE_PERMISSION_MAP: Record<string, PermissionName[]> = {
     ...PROFILE_PERMISSIONS,
     ...ADMIN_USER_PERMISSIONS,
     ...ADMIN_ROLE_PERMISSIONS,
+    ...ADMIN_SERVICE_PERMISSIONS,
     ...ADMIN_DAILY_REGISTER_PERMISSIONS,
+    ...ADMIN_ADVANCE_PERMISSIONS,
+    ...ADMIN_PAYROLL_PERMISSIONS,
+    ...ADMIN_INVENTORY_PERMISSIONS,
   ],
   MESA: [
     ...PROFILE_PERMISSIONS,
     PERMISSIONS.SERVICES_LIST,
     PERMISSIONS.DAILY_REGISTERS_CREATE,
+    PERMISSIONS.DAILY_REGISTERS_LIST,
+    PERMISSIONS.ADVANCES_READ,
+    PERMISSIONS.PAYROLL_READ,
+    PERMISSIONS.INVENTORY_LIST,
   ],
 };
 
@@ -138,6 +188,7 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionName, string> = {
   [PERMISSIONS.PERMISSIONS_ASSIGN_TO_ROLE]: 'Assign permissions to roles',
 
   [PERMISSIONS.SERVICES_LIST]: 'List salon services',
+  [PERMISSIONS.SERVICES_READ]: 'View salon service details',
   [PERMISSIONS.SERVICES_CREATE]: 'Create salon services',
   [PERMISSIONS.SERVICES_UPDATE]: 'Update salon services',
   [PERMISSIONS.SERVICES_DELETE]: 'Soft delete salon services',
@@ -146,6 +197,12 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionName, string> = {
   [PERMISSIONS.DAILY_REGISTERS_LIST]: 'List daily work registers',
   [PERMISSIONS.DAILY_REGISTERS_READ]: 'View daily work register details',
   [PERMISSIONS.DAILY_REGISTERS_VOID]: 'Void daily work registers',
+
+  [PERMISSIONS.ADVANCES_CREATE]: 'Create cash advances for manicurists',
+  [PERMISSIONS.ADVANCES_LIST]: 'List cash advances',
+  [PERMISSIONS.ADVANCES_READ]: 'View own or assigned cash advances',
+  [PERMISSIONS.ADVANCES_CANCEL]: 'Cancel pending cash advances',
+  [PERMISSIONS.ADVANCES_DELETE]: 'Soft delete cash advances',
 
   [PERMISSIONS.APPOINTMENTS_LIST]: 'List appointments',
   [PERMISSIONS.APPOINTMENTS_READ]: 'View appointment details',
@@ -160,15 +217,21 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionName, string> = {
   [PERMISSIONS.POS_READ_SALES]: 'View POS sales',
 
   [PERMISSIONS.INVENTORY_LIST]: 'List inventory items',
-  [PERMISSIONS.INVENTORY_READ]: 'View inventory details',
-  [PERMISSIONS.INVENTORY_UPDATE]: 'Update inventory levels',
+  [PERMISSIONS.INVENTORY_READ]: 'View inventory details and movements',
+  [PERMISSIONS.INVENTORY_CREATE]: 'Create inventory materials and categories',
+  [PERMISSIONS.INVENTORY_UPDATE]: 'Update inventory items and register movements',
   [PERMISSIONS.INVENTORY_REQUEST_RESTOCK]: 'Request inventory restock',
 
   [PERMISSIONS.PAYROLL_LIST]: 'List payroll records',
   [PERMISSIONS.PAYROLL_READ]: 'View payroll details',
+  [PERMISSIONS.PAYROLL_CREATE]: 'Generate payroll drafts',
+  [PERMISSIONS.PAYROLL_CLOSE]: 'Close payroll periods',
   [PERMISSIONS.PAYROLL_CALCULATE]: 'Calculate payroll',
   [PERMISSIONS.PAYROLL_APPROVE]: 'Approve payroll',
 
   [PERMISSIONS.AUDIT_LIST]: 'List audit logs',
   [PERMISSIONS.AUDIT_READ]: 'View audit log details',
+
+  [PERMISSIONS.NOTIFICATIONS_LIST]: 'List audit notifications',
+  [PERMISSIONS.NOTIFICATIONS_UPDATE]: 'Mark audit notifications as read',
 };

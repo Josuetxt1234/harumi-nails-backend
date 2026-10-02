@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
@@ -19,6 +19,7 @@ export class CreateDailyRegisterItemDto {
   @IsUUID('4', { message: 'serviceId must be a valid UUID.' })
   serviceId!: string;
 
+  @Type(() => Number)
   @IsInt({ message: 'quantity must be an integer.' })
   @Min(1, { message: 'quantity must be at least 1.' })
   quantity!: number;
@@ -29,6 +30,9 @@ export class CreateDailyRegisterDto {
   @IsUUID('4', { message: 'mesaUserId must be a valid UUID.' })
   mesaUserId?: string;
 
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsString({ message: 'clientName must be a string.' })
   @IsNotEmpty({ message: 'clientName is required.' })
   clientName!: string;
@@ -39,6 +43,7 @@ export class CreateDailyRegisterDto {
   paymentMethod!: PaymentMethod;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber(
     { maxDecimalPlaces: 2 },
     { message: 'discountAmount must be a number with up to 2 decimals.' },
@@ -47,6 +52,21 @@ export class CreateDailyRegisterDto {
   discountAmount?: number;
 
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+
+    if (value === true || value === 'true') {
+      return true;
+    }
+
+    if (value === false || value === 'false') {
+      return false;
+    }
+
+    return value;
+  })
   @IsBoolean({ message: 'hasCardFee must be a boolean.' })
   hasCardFee?: boolean;
 

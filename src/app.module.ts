@@ -12,6 +12,10 @@ import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { EmailModule } from './email/email.module';
 import { HashingModule } from './hashing/hashing.module';
 import { DailyRegistersModule } from './daily-registers/daily-registers.module';
+import { AdvancesModule } from './modules/advances/advances.module';
+import { InventoryModule } from './modules/inventory/inventory.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
+import { PayrollModule } from './modules/payroll/payroll.module';
 import { PermissionsModule } from './permissions/permissions.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RolesModule } from './roles/roles.module';
@@ -34,6 +38,10 @@ import { UsersModule } from './users/users.module';
     RolesModule,
     SalonServicesModule,
     DailyRegistersModule,
+    AdvancesModule,
+    PayrollModule,
+    InventoryModule,
+    NotificationsModule,
     AuthModule,
   ],
   providers: [

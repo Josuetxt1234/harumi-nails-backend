@@ -11,7 +11,10 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { Permissions } from '../common/decorators/permissions.decorator';
+import {
+  Permissions,
+  PermissionsAny,
+} from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constants';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -49,7 +52,10 @@ export class DailyRegistersController {
   }
 
   @Get()
-  @Permissions(PERMISSIONS.DAILY_REGISTERS_LIST)
+  @PermissionsAny(
+    PERMISSIONS.DAILY_REGISTERS_LIST,
+    PERMISSIONS.DAILY_REGISTERS_CREATE,
+  )
   list(
     @CurrentUser() actor: AuthenticatedUser,
     @Query() query: ListDailyRegistersQueryDto,

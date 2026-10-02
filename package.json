@@ -18,7 +18,10 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:e2e:inventory": "ts-node scripts/test-e2e-inventory.ts",
+    "test:e2e:master": "ts-node scripts/test-e2e-master.ts",
     "db:seed": "prisma db seed",
+    "seed:demo": "ts-node prisma/seed-demo.ts",
     "email:test": "ts-node scripts/test-email.ts"
   },
   "prisma": {

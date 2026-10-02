@@ -2,7 +2,7 @@ export const IS_PUBLIC_KEY = 'isPublic';
 export const IS_OPTIONAL_AUTH_KEY = 'isOptionalAuth';
 
 export const AUTH_ERROR_MESSAGES = {
-  INVALID_CREDENTIALS: 'Invalid email or password.',
+  INVALID_CREDENTIALS: 'Invalid credentials',
   ACCOUNT_INACTIVE: 'This account is inactive.',
   ACCOUNT_DEACTIVATED: 'This account has been deactivated.',
   NO_ROLES_ASSIGNED: 'This account has no active roles assigned.',

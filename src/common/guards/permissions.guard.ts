@@ -7,6 +7,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { AUTH_ERROR_MESSAGES } from '../constants/auth.constants';
 import { PERMISSIONS_KEY } from '../constants/permissions.constants';
+import { PERMISSIONS_MATCH_KEY } from '../decorators/permissions.decorator';
 import { AuthenticatedUser } from '../interfaces/authenticated-user.interface';
 
 @Injectable()
@@ -18,6 +19,11 @@ export class PermissionsGuard implements CanActivate {
       PERMISSIONS_KEY,
       [context.getHandler(), context.getClass()],
     );
+    const matchMode =
+      this.reflector.getAllAndOverride<'all' | 'any'>(PERMISSIONS_MATCH_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]) ?? 'all';
 
     if (!requiredPermissions || requiredPermissions.length === 0) {
       return true;
@@ -30,11 +36,16 @@ export class PermissionsGuard implements CanActivate {
       throw new ForbiddenException(AUTH_ERROR_MESSAGES.UNAUTHORIZED);
     }
 
-    const hasAllRequiredPermissions = requiredPermissions.every((permission) =>
-      user.permissions.includes(permission),
-    );
+    const hasRequiredPermissions =
+      matchMode === 'any'
+        ? requiredPermissions.some((permission) =>
+            user.permissions.includes(permission),
+          )
+        : requiredPermissions.every((permission) =>
+            user.permissions.includes(permission),
+          );
 
-    if (!hasAllRequiredPermissions) {
+    if (!hasRequiredPermissions) {
       throw new ForbiddenException(AUTH_ERROR_MESSAGES.UNAUTHORIZED);
     }
 

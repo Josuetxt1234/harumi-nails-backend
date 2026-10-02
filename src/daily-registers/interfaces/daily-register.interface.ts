@@ -36,15 +36,25 @@ export interface PaginatedDailyRegisters {
     page: number;
     limit: number;
     totalPages: number;
+    totalPaid: number;
+    totalCommission: number;
+    servicesCount: number;
   };
 }
 
 export interface ListDailyRegistersFilters {
-  date?: string;
+  start: Date;
+  end: Date;
   mesaUserId?: string;
   paymentMethod?: PaymentMethod;
   page: number;
   limit: number;
+}
+
+export interface TodayRegistersFilters {
+  startOfDay: Date;
+  endOfDay: Date;
+  mesaUserId?: string;
 }
 
 export interface CreateDailyRegisterDetailData {

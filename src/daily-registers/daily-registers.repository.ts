@@ -7,6 +7,7 @@ import {
   DailyRegisterResponse,
   ListDailyRegistersFilters,
   PaginatedDailyRegisters,
+  TodayRegistersFilters,
 } from './interfaces/daily-register.interface';
 
 const registerInclude = {
@@ -50,21 +51,25 @@ export class DailyRegistersRepository {
         data: {
           clientName: data.clientName,
           paymentMethod: data.paymentMethod,
-          subtotalBase: data.subtotalBase,
-          discountAmount: data.discountAmount,
-          cardFeeAmount: data.cardFeeAmount,
-          totalPaid: data.totalPaid,
-          totalCommission: data.totalCommission,
+          subtotalBase: new Prisma.Decimal(data.subtotalBase.toFixed(2)),
+          discountAmount: new Prisma.Decimal(data.discountAmount.toFixed(2)),
+          cardFeeAmount: new Prisma.Decimal(data.cardFeeAmount.toFixed(2)),
+          totalPaid: new Prisma.Decimal(data.totalPaid.toFixed(2)),
+          totalCommission: new Prisma.Decimal(data.totalCommission.toFixed(2)),
           mesaUserId: data.mesaUserId,
           createdById: data.createdById,
           details: {
             create: data.details.map((detail) => ({
               serviceId: detail.serviceId,
-              unitPrice: detail.unitPrice,
-              commissionRate: detail.commissionRate,
+              unitPrice: new Prisma.Decimal(detail.unitPrice.toFixed(2)),
+              commissionRate: new Prisma.Decimal(
+                detail.commissionRate.toFixed(2),
+              ),
               quantity: detail.quantity,
-              lineSubtotal: detail.lineSubtotal,
-              lineCommission: detail.lineCommission,
+              lineSubtotal: new Prisma.Decimal(detail.lineSubtotal.toFixed(2)),
+              lineCommission: new Prisma.Decimal(
+                detail.lineCommission.toFixed(2),
+              ),
             })),
           },
         },
@@ -75,23 +80,17 @@ export class DailyRegistersRepository {
     return this.mapToResponse(created);
   }
 
-  async findTodayByMesaUserId(
-    mesaUserId: string,
+  async findToday(
+    filters: TodayRegistersFilters,
   ): Promise<DailyRegisterResponse[]> {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
-
     const registers = await this.prisma.dailyRegister.findMany({
       where: {
-        mesaUserId,
         isDeleted: false,
         createdAt: {
-          gte: startOfDay,
-          lte: endOfDay,
+          gte: filters.startOfDay,
+          lte: filters.endOfDay,
         },
+        ...(filters.mesaUserId ? { mesaUserId: filters.mesaUserId } : {}),
       },
       include: registerInclude,
       orderBy: { createdAt: 'desc' },
@@ -103,13 +102,11 @@ export class DailyRegistersRepository {
   async findMany(
     filters: ListDailyRegistersFilters,
   ): Promise<PaginatedDailyRegisters> {
-    const { startOfDay, endOfDay } = this.resolveDateRange(filters.date);
-
     const where: Prisma.DailyRegisterWhereInput = {
       isDeleted: false,
       createdAt: {
-        gte: startOfDay,
-        lte: endOfDay,
+        gte: filters.start,
+        lte: filters.end,
       },
       ...(filters.mesaUserId ? { mesaUserId: filters.mesaUserId } : {}),
       ...(filters.paymentMethod
@@ -117,16 +114,32 @@ export class DailyRegistersRepository {
         : {}),
     };
 
-    const [total, registers] = await this.prisma.$transaction([
-      this.prisma.dailyRegister.count({ where }),
-      this.prisma.dailyRegister.findMany({
-        where,
-        include: registerInclude,
-        orderBy: { createdAt: 'desc' },
-        skip: (filters.page - 1) * filters.limit,
-        take: filters.limit,
-      }),
-    ]);
+    const [total, registers, moneyAgg, servicesAgg] =
+      await this.prisma.$transaction([
+        this.prisma.dailyRegister.count({ where }),
+        this.prisma.dailyRegister.findMany({
+          where,
+          include: registerInclude,
+          orderBy: { createdAt: 'desc' },
+          skip: (filters.page - 1) * filters.limit,
+          take: filters.limit,
+        }),
+        this.prisma.dailyRegister.aggregate({
+          where,
+          _sum: {
+            totalPaid: true,
+            totalCommission: true,
+          },
+        }),
+        this.prisma.dailyRegisterDetail.aggregate({
+          where: {
+            dailyRegister: where,
+          },
+          _sum: {
+            quantity: true,
+          },
+        }),
+      ]);
 
     return {
       data: registers.map((register) => this.mapToResponse(register)),
@@ -135,6 +148,9 @@ export class DailyRegistersRepository {
         page: filters.page,
         limit: filters.limit,
         totalPages: Math.ceil(total / filters.limit) || 1,
+        totalPaid: toMoney(Number(moneyAgg._sum.totalPaid ?? 0)),
+        totalCommission: toMoney(Number(moneyAgg._sum.totalCommission ?? 0)),
+        servicesCount: servicesAgg._sum.quantity ?? 0,
       },
     };
   }
@@ -190,20 +206,6 @@ export class DailyRegistersRepository {
     return users;
   }
 
-  private resolveDateRange(date?: string): {
-    startOfDay: Date;
-    endOfDay: Date;
-  } {
-    const targetDate = date ? new Date(`${date}T00:00:00`) : new Date();
-    const startOfDay = new Date(targetDate);
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const endOfDay = new Date(targetDate);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    return { startOfDay, endOfDay };
-  }
-
   async findActiveMesaUserById(userId: string): Promise<{
     id: string;
     roles: string[];
@@ -247,11 +249,11 @@ export class DailyRegistersRepository {
       id: register.id,
       clientName: register.clientName,
       paymentMethod: register.paymentMethod as PaymentMethod,
-      subtotalBase: toMoney(Number(register.subtotalBase)),
-      discountAmount: toMoney(Number(register.discountAmount)),
-      cardFeeAmount: toMoney(Number(register.cardFeeAmount)),
-      totalPaid: toMoney(Number(register.totalPaid)),
-      totalCommission: toMoney(Number(register.totalCommission)),
+      subtotalBase: toMoney(register.subtotalBase.toNumber()),
+      discountAmount: toMoney(register.discountAmount.toNumber()),
+      cardFeeAmount: toMoney(register.cardFeeAmount.toNumber()),
+      totalPaid: toMoney(register.totalPaid.toNumber()),
+      totalCommission: toMoney(register.totalCommission.toNumber()),
       mesaUserId: register.mesaUserId,
       mesaUserName: `${register.mesaUser.firstName} ${register.mesaUser.lastName}`.trim(),
       createdById: register.createdById,
@@ -262,11 +264,11 @@ export class DailyRegistersRepository {
         id: detail.id,
         serviceId: detail.serviceId,
         serviceName: detail.service.name,
-        unitPrice: toMoney(Number(detail.unitPrice)),
-        commissionRate: toMoney(Number(detail.commissionRate)),
+        unitPrice: toMoney(detail.unitPrice.toNumber()),
+        commissionRate: toMoney(detail.commissionRate.toNumber()),
         quantity: detail.quantity,
-        lineSubtotal: toMoney(Number(detail.lineSubtotal)),
-        lineCommission: toMoney(Number(detail.lineCommission)),
+        lineSubtotal: toMoney(detail.lineSubtotal.toNumber()),
+        lineCommission: toMoney(detail.lineCommission.toNumber()),
       })),
     };
   }
