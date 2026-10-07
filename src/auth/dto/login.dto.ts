@@ -1,17 +1,20 @@
 import { Transform } from 'class-transformer';
-import {
-  IsBoolean,
-  IsEmail,
-  IsOptional,
-} from 'class-validator';
-import { IsPassword } from '../../common/decorators/is-password.decorator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
+// Login deliberately avoids @IsEmail / @IsPassword: any format feedback here
+// would disclose the password policy and whether an address is well-formed
+// before the credentials are actually checked. Every failure returns the same
+// 401 through the controller's exceptionFactory.
 export class LoginDto {
-  @Transform(({ value }) => value?.trim().toLowerCase())
-  @IsEmail({}, { message: 'Email must be a valid email address.' })
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsString()
+  @IsNotEmpty()
   email!: string;
 
-  @IsPassword()
+  @IsString()
+  @IsNotEmpty()
   password!: string;
 
   @IsOptional()
@@ -22,6 +25,6 @@ export class LoginDto {
 
     return value === true || value === 'true';
   })
-  @IsBoolean({ message: 'Remember me must be a boolean value.' })
+  @IsBoolean()
   rememberMe?: boolean = false;
 }

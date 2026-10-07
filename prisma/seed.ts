@@ -5,6 +5,11 @@ import {
   PERMISSION_DESCRIPTIONS,
   ROLE_PERMISSION_MAP,
 } from '../src/common/constants/permissions.constants';
+import {
+  seedAdminPassword,
+  seedMesaPassword,
+  seedSuperAdminPassword,
+} from './seed-credentials';
 
 const prisma = new PrismaClient();
 
@@ -19,104 +24,53 @@ type SeedUser = {
   role: (typeof ROLES)[number];
 };
 
-const SEED_USERS: SeedUser[] = [
-  {
-    firstName: 'Super',
-    lastName: 'Admin',
-    email: 'superadmin@haruminails.com',
-    password: 'SuperAdmin123!',
-    phone: '0990000001',
-    role: 'SUPER_ADMIN',
-  },
-  {
-    firstName: 'Laura',
-    lastName: 'Harumi',
-    email: 'admin@haruminails.com',
-    password: 'Admin123!',
-    phone: '0990000002',
-    role: 'ADMIN',
-  },
-  {
-    firstName: 'Maria',
-    lastName: 'Lopez',
-    email: 'mesa1@haruminails.com',
-    password: 'Mesa1234!',
-    phone: '0990001001',
-    role: 'MESA',
-  },
-  {
-    firstName: 'Ana',
-    lastName: 'Torres',
-    email: 'mesa2@haruminails.com',
-    password: 'Mesa1234!',
-    phone: '0990001002',
-    role: 'MESA',
-  },
-  {
-    firstName: 'Sofia',
-    lastName: 'Ruiz',
-    email: 'mesa3@haruminails.com',
-    password: 'Mesa1234!',
-    phone: '0990001003',
-    role: 'MESA',
-  },
-  {
-    firstName: 'Camila',
-    lastName: 'Vargas',
-    email: 'mesa4@haruminails.com',
-    password: 'Mesa1234!',
-    phone: '0990001004',
-    role: 'MESA',
-  },
-  {
-    firstName: 'Valentina',
-    lastName: 'Mora',
-    email: 'mesa5@haruminails.com',
-    password: 'Mesa1234!',
-    phone: '0990001005',
-    role: 'MESA',
-  },
-  {
-    firstName: 'Daniela',
-    lastName: 'Paredes',
-    email: 'mesa6@haruminails.com',
-    password: 'Mesa1234!',
-    phone: '0990001006',
-    role: 'MESA',
-  },
+const MESA_SEED_PROFILES = [
+  { firstName: 'Maria', lastName: 'Lopez', email: 'mesa1@haruminails.com' },
+  { firstName: 'Ana', lastName: 'Torres', email: 'mesa2@haruminails.com' },
+  { firstName: 'Sofia', lastName: 'Ruiz', email: 'mesa3@haruminails.com' },
+  { firstName: 'Camila', lastName: 'Vargas', email: 'mesa4@haruminails.com' },
+  { firstName: 'Valentina', lastName: 'Mora', email: 'mesa5@haruminails.com' },
+  { firstName: 'Daniela', lastName: 'Paredes', email: 'mesa6@haruminails.com' },
   {
     firstName: 'Isabella',
     lastName: 'Castillo',
     email: 'mesa7@haruminails.com',
-    password: 'Mesa1234!',
-    phone: '0990001007',
-    role: 'MESA',
   },
-  {
-    firstName: 'Fernanda',
-    lastName: 'Salazar',
-    email: 'mesa8@haruminails.com',
-    password: 'Mesa1234!',
-    phone: '0990001008',
-    role: 'MESA',
-  },
-  {
-    firstName: 'Paula',
-    lastName: 'Mendez',
-    email: 'mesa9@haruminails.com',
-    password: 'Mesa1234!',
-    phone: '0990001009',
-    role: 'MESA',
-  },
-  {
-    firstName: 'Gabriela',
-    lastName: 'Rios',
-    email: 'mesa10@haruminails.com',
-    password: 'Mesa1234!',
-    phone: '0990001010',
-    role: 'MESA',
-  },
+  { firstName: 'Fernanda', lastName: 'Salazar', email: 'mesa8@haruminails.com' },
+  { firstName: 'Paula', lastName: 'Mendez', email: 'mesa9@haruminails.com' },
+  { firstName: 'Gabriela', lastName: 'Rios', email: 'mesa10@haruminails.com' },
 ];
+
+// Built lazily so a missing SEED_*_PASSWORD fails the run with a clear message
+// instead of blowing up while the module is still loading.
+function buildSeedUsers(): SeedUser[] {
+  const mesaPassword = seedMesaPassword();
+
+  return [
+    {
+      firstName: 'Super',
+      lastName: 'Admin',
+      email: 'superadmin@haruminails.com',
+      password: seedSuperAdminPassword(),
+      phone: '0990000001',
+      role: 'SUPER_ADMIN',
+    },
+    {
+      firstName: 'Laura',
+      lastName: 'Harumi',
+      email: 'admin@haruminails.com',
+      password: seedAdminPassword(),
+      phone: '0990000002',
+      role: 'ADMIN',
+    },
+    ...MESA_SEED_PROFILES.map((profile, index) => ({
+      ...profile,
+      password: mesaPassword,
+      phone: `09900010${String(index + 1).padStart(2, '0')}`,
+      role: 'MESA' as const,
+    })),
+  ];
+}
 
 async function seedRoles(): Promise<Record<string, string>> {
   const roleIds: Record<string, string> = {};
@@ -204,7 +158,7 @@ async function seedUsers(roleIds: Record<string, string>): Promise<string | unde
   let skippedCount = 0;
   let auditorUserId: string | undefined;
 
-  for (const seedUser of SEED_USERS) {
+  for (const seedUser of buildSeedUsers()) {
     const existingUser = await prisma.user.findFirst({
       where: {
         email: seedUser.email,
@@ -259,9 +213,7 @@ async function seedUsers(roleIds: Record<string, string>): Promise<string | unde
     );
 
     createdCount += 1;
-    console.log(
-      `User created: ${seedUser.email} (${seedUser.role}) / password: ${seedUser.password}`,
-    );
+    console.log(`User created: ${seedUser.email} (${seedUser.role})`);
   }
 
   console.log(

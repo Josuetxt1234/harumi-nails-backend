@@ -13,10 +13,10 @@ import {
 } from '../src/common/utils/date.util';
 import { toMoney } from '../src/common/utils/money.util';
 import { calculatePayrollTotals } from '../src/modules/payroll/payroll-calculator';
+import { seedDemoPassword } from './seed-credentials';
 
 const prisma = new PrismaClient();
 const TZ = 'America/Guayaquil';
-const DEMO_PASSWORD = 'Admin1234*';
 const CARD_FEE_RATE = 0.05;
 
 const ROLES = ['SUPER_ADMIN', 'ADMIN', 'MESA'] as const;
@@ -275,7 +275,7 @@ async function upsertDemoUsers(
   adminId: string;
   mesas: Record<MesaKey, string>;
 }> {
-  const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 12);
+  const passwordHash = await bcrypt.hash(seedDemoPassword(), 12);
   const mesas = {} as Record<MesaKey, string>;
   let adminId = '';
   let auditorId: string | undefined;
@@ -651,7 +651,7 @@ async function main(): Promise<void> {
   });
 
   console.log('\nDemo seed completed.');
-  console.log('Login (password for all): Admin1234*');
+  console.log('Login password for all accounts: the value of SEED_DEMO_PASSWORD.');
   console.log('  SUPER_ADMIN  superadmin@harumi.com');
   console.log('  ADMIN        admin@harumi.com');
   console.log('  Mesa 1       gabriela.rios@harumi.com  (Gabriela Ríos)');

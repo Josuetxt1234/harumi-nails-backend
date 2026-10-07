@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -29,6 +30,8 @@ import { UsersRepository } from './users.repository';
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     private readonly usersRepository: UsersRepository,
     private readonly rolesService: RolesService,
@@ -164,6 +167,8 @@ export class UsersService {
           phone: createUserDto.phone?.trim(),
           avatarUrl,
           isActive: createUserDto.isActive,
+          // The admin picked this password, so it is temporary by definition.
+          mustChangePassword: true,
           createdById: actorUserId,
         },
         roleIds,
@@ -198,6 +203,7 @@ export class UsersService {
       phone?: string | null;
       avatarUrl?: string | null;
       password?: string;
+      mustChangePassword?: boolean;
       updatedById: string;
     } = {
       updatedById: actorUserId,
@@ -219,6 +225,8 @@ export class UsersService {
       updateData.password = await this.hashingService.hashPassword(
         updateUserDto.password,
       );
+      // Same reasoning as a reset: the owner did not choose this password.
+      updateData.mustChangePassword = true;
     }
 
     if (avatarFile) {
@@ -309,6 +317,8 @@ export class UsersService {
 
     await this.usersRepository.update(userId, {
       password: hashedPassword,
+      // The owner chose this one, so the temporary-password gate is satisfied.
+      mustChangePassword: false,
       updatedById: userId,
     });
     await this.usersRepository.deleteAllSessionsForUser(userId);
@@ -328,6 +338,9 @@ export class UsersService {
 
     await this.usersRepository.update(userId, {
       password: hashedPassword,
+      // An admin reset hands out a temporary password: force a change on the
+      // next login so it never becomes the permanent one.
+      mustChangePassword: true,
       updatedById: actorUserId,
     });
     await this.usersRepository.deleteAllSessionsForUser(userId);
@@ -457,6 +470,51 @@ export class UsersService {
       plainTextPassword,
       hashedPassword,
     );
+  }
+
+  /**
+   * Runs exactly one bcrypt comparison whether or not the account exists, so a
+   * login attempt takes the same time for an unknown email as for a wrong
+   * password and cannot be used to enumerate users.
+   */
+  async verifyPasswordForAuthentication(
+    plainTextPassword: string,
+    user: UserWithRoles | null,
+  ): Promise<boolean> {
+    if (!user) {
+      return this.hashingService.simulatePasswordComparison(plainTextPassword);
+    }
+
+    return this.verifyPassword(plainTextPassword, user.password);
+  }
+
+  /**
+   * Re-hashes a password that was stored with an outdated cost factor. Only
+   * runs once the credentials were accepted, so a failed attempt never pays for
+   * the extra work, and a failure here must not block a valid login.
+   */
+  async upgradePasswordHashIfNeeded(
+    user: Pick<UserWithRoles, 'id' | 'password'>,
+    plainTextPassword: string,
+  ): Promise<void> {
+    if (!this.hashingService.needsRehash(user.password)) {
+      return;
+    }
+
+    try {
+      const password = await this.hashingService.hashPassword(plainTextPassword);
+
+      await this.usersRepository.update(user.id, {
+        password,
+        updatedById: user.id,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Could not upgrade the password hash of user ${user.id}: ${
+          error instanceof Error ? error.message : 'unknown error'
+        }`,
+      );
+    }
   }
 
   assertUserExistsForAuthentication(

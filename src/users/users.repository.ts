@@ -18,16 +18,43 @@ import {
 export class UsersRepository {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Lookup used by /auth/login, resolved in a single round trip.
+   *
+   * Prisma answers every `include` with a follow-up query that it skips when
+   * the parent side came back empty, so reading the roles through the relation
+   * made a known email cost two extra round trips compared to an unknown one.
+   * Against a remote database that is a ~300ms oracle for enumerating accounts
+   * through the login endpoint. One joined statement costs the same either way.
+   *
+   * Column names are quoted because the Prisma models only remap table names.
+   */
   async findActiveByEmail(email: string): Promise<UserWithRoles | null> {
-    const user = await this.prisma.user.findFirst({
-      where: {
-        email,
-        isDeleted: false,
-      },
-      include: this.userRolesInclude(),
-    });
+    const rows = await this.prisma.$queryRaw<UserWithRoles[]>`
+      SELECT
+        u."id",
+        u."firstName",
+        u."lastName",
+        u."email",
+        u."phone",
+        u."password",
+        u."isActive",
+        u."avatarUrl",
+        COALESCE(
+          ARRAY_AGG(r."name") FILTER (WHERE r."name" IS NOT NULL),
+          ARRAY[]::text[]
+        ) AS "roles"
+      FROM "users" u
+      LEFT JOIN "user_roles" ur
+        ON ur."userId" = u."id" AND ur."isDeleted" = false
+      LEFT JOIN "roles" r
+        ON r."id" = ur."roleId" AND r."isDeleted" = false
+      WHERE u."email" = ${email} AND u."isDeleted" = false
+      GROUP BY u."id"
+      LIMIT 1
+    `;
 
-    return user ? this.mapToUserWithRoles(user) : null;
+    return rows.at(0) ?? null;
   }
 
   async emailExistsForActiveUser(email: string): Promise<boolean> {
@@ -165,6 +192,7 @@ export class UsersRepository {
         phone: data.phone,
         avatarUrl: data.avatarUrl,
         isActive: data.isActive ?? true,
+        mustChangePassword: data.mustChangePassword ?? true,
         createdById: data.createdById,
       },
     });
@@ -186,6 +214,7 @@ export class UsersRepository {
           phone: data.phone,
           avatarUrl: data.avatarUrl,
           isActive: data.isActive ?? true,
+          mustChangePassword: data.mustChangePassword ?? true,
           createdById: data.createdById,
           roles: {
             create: uniqueRoleIds.map((roleId) => ({
@@ -234,6 +263,9 @@ export class UsersRepository {
         ...(data.phone !== undefined ? { phone: data.phone } : {}),
         ...(data.avatarUrl !== undefined ? { avatarUrl: data.avatarUrl } : {}),
         ...(data.password !== undefined ? { password: data.password } : {}),
+        ...(data.mustChangePassword !== undefined
+          ? { mustChangePassword: data.mustChangePassword }
+          : {}),
         updatedById: data.updatedById,
       },
     });
@@ -389,6 +421,7 @@ export class UsersRepository {
     email: string;
     phone: string | null;
     avatarUrl: string | null;
+    mustChangePassword: boolean;
     roles: Array<{ role: { name: string; isDeleted: boolean } }>;
   }): UserProfileBase {
     return {
@@ -398,6 +431,7 @@ export class UsersRepository {
       email: user.email,
       phone: user.phone,
       avatarUrl: user.avatarUrl,
+      mustChangePassword: user.mustChangePassword,
       roles: this.extractRoleNames(user.roles),
     };
   }
@@ -409,6 +443,7 @@ export class UsersRepository {
     email: string;
     phone: string | null;
     avatarUrl: string | null;
+    mustChangePassword: boolean;
     isActive: boolean;
     createdAt: Date;
     updatedAt: Date;

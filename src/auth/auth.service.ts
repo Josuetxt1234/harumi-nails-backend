@@ -1,7 +1,4 @@
-import {
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { AUTH_ERROR_MESSAGES } from '../common/constants/auth.constants';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { HashingService } from '../hashing/hashing.service';
@@ -9,8 +6,8 @@ import { UsersService } from '../users/users.service';
 import { UserWithRoles } from '../users/interfaces/user-with-roles.interface';
 import { LoginDto } from './dto/login.dto';
 import {
+  AuthResult,
   AuthUserResponse,
-  LoginResponse,
 } from './interfaces/auth-response.interface';
 import { SessionMetadata } from './interfaces/session-metadata.interface';
 import { SessionService } from './session.service';
@@ -18,6 +15,8 @@ import { TokenService } from './token.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly usersService: UsersService,
     private readonly tokenService: TokenService,
@@ -28,41 +27,65 @@ export class AuthService {
   async login(
     loginDto: LoginDto,
     metadata: SessionMetadata = {},
-  ): Promise<LoginResponse> {
+  ): Promise<AuthResult> {
     const user = await this.usersService.findActiveByEmail(loginDto.email);
 
-    this.usersService.assertUserExistsForAuthentication(user);
-    this.usersService.assertUserIsActive(user);
+    // Both branches run one bcrypt comparison at the same cost factor, so a
+    // missing account cannot be told apart from a wrong password by timing.
+    const isPasswordValid =
+      await this.usersService.verifyPasswordForAuthentication(
+        loginDto.password,
+        user,
+      );
 
-    const isPasswordValid = await this.usersService.verifyPassword(
-      loginDto.password,
-      user.password,
-    );
-
-    if (!isPasswordValid) {
+    if (!this.isAuthenticationSuccessful(user, isPasswordValid)) {
       throw new UnauthorizedException(AUTH_ERROR_MESSAGES.INVALID_CREDENTIALS);
     }
 
-    this.usersService.assertUserHasRoles(user);
+    // Converges legacy hashes towards the current cost, which is what keeps the
+    // real comparison and the decoy comparison the same length over time.
+    await this.usersService.upgradePasswordHashIfNeeded(user, loginDto.password);
 
-    return this.issueAuthResponse(user, metadata, loginDto.rememberMe ?? false);
+    return this.issueAuthResponse(
+      user,
+      metadata,
+      loginDto.rememberMe ?? false,
+    );
   }
 
-  async refresh(refreshToken: string): Promise<LoginResponse> {
+  async refresh(refreshToken: string): Promise<AuthResult> {
     const refreshTokenHash = this.hashingService.hashSha256(refreshToken);
-    const session =
-      await this.sessionService.findActiveByRefreshTokenHash(refreshTokenHash);
+    const consumption =
+      await this.sessionService.consumeRefreshToken(refreshTokenHash);
 
-    if (!session) {
-      throw new UnauthorizedException(AUTH_ERROR_MESSAGES.INVALID_REFRESH_TOKEN);
+    if (consumption.status === 'reused') {
+      const revokedSessions =
+        await this.sessionService.revokeAllSessionsForUser(
+          consumption.session.userId,
+        );
+
+      this.logger.warn(
+        `Refresh token reuse detected for user ${consumption.session.userId}. ` +
+          `Revoked ${revokedSessions} active session(s).`,
+      );
+
+      throw new UnauthorizedException(AUTH_ERROR_MESSAGES.SESSION_COMPROMISED);
     }
 
-    const user = await this.usersService.getActiveProfileOrFail(session.userId);
-    this.usersService.assertUserHasRoles(user);
+    if (consumption.status !== 'consumed') {
+      throw new UnauthorizedException(
+        AUTH_ERROR_MESSAGES.INVALID_REFRESH_TOKEN,
+      );
+    }
 
-    await this.sessionService.revokeSession(session.id, session.userId);
+    const { session } = consumption;
+    const user = await this.usersService.getActiveProfileById(session.userId);
 
-    const rememberMe = this.tokenService.isRememberMeSession(session);
+    if (!user || user.roles.length === 0) {
+      throw new UnauthorizedException(
+        AUTH_ERROR_MESSAGES.INVALID_REFRESH_TOKEN,
+      );
+    }
 
     return this.issueAuthResponse(
       user,
@@ -70,7 +93,7 @@ export class AuthService {
         userAgent: session.userAgent ?? undefined,
         ipAddress: session.ipAddress ?? undefined,
       },
-      rememberMe,
+      this.tokenService.isRememberMeSession(session),
     );
   }
 
@@ -86,47 +109,62 @@ export class AuthService {
     return this.usersService.getActiveProfileOrFail(userId);
   }
 
+  private isAuthenticationSuccessful(
+    user: UserWithRoles | null,
+    isPasswordValid: boolean,
+  ): user is UserWithRoles {
+    return Boolean(
+      user && isPasswordValid && user.isActive && user.roles.length > 0,
+    );
+  }
+
   private async issueAuthResponse(
     user: Pick<UserWithRoles, 'id'>,
     metadata: SessionMetadata,
     rememberMe = false,
-  ): Promise<LoginResponse> {
+  ): Promise<AuthResult> {
     const profile = await this.usersService.getActiveProfileOrFail(user.id);
-
-    const payload: JwtPayload = {
-      sub: profile.id,
-      email: profile.email,
-      roles: profile.roles,
-    };
 
     const refreshToken = this.hashingService.generateRandomToken();
     const refreshTokenHash = this.hashingService.hashSha256(refreshToken);
     const expiresAt =
       this.tokenService.getRefreshTokenExpirationDate(rememberMe);
 
-    await this.sessionService.createSession(
-      user.id,
+    const session = await this.sessionService.createSession(
+      profile.id,
       refreshTokenHash,
       expiresAt,
       metadata,
     );
 
-    const tokens = await this.tokenService.buildAuthTokens(
-      payload,
-      refreshToken,
-    );
+    const payload: JwtPayload = {
+      sub: profile.id,
+      email: profile.email,
+      roles: profile.roles,
+      sid: session.id,
+    };
+
+    const tokens = await this.tokenService.generateAccessToken(payload);
 
     return {
-      ...tokens,
-      user: {
-        id: profile.id,
-        firstName: profile.firstName,
-        lastName: profile.lastName,
-        email: profile.email,
-        phone: profile.phone,
-        avatarUrl: profile.avatarUrl,
-        roles: profile.roles,
-        permissions: profile.permissions,
+      body: {
+        ...tokens,
+        user: {
+          id: profile.id,
+          firstName: profile.firstName,
+          lastName: profile.lastName,
+          email: profile.email,
+          phone: profile.phone,
+          avatarUrl: profile.avatarUrl,
+          roles: profile.roles,
+          permissions: profile.permissions,
+          mustChangePassword: profile.mustChangePassword,
+        },
+      },
+      refreshToken: {
+        refreshToken,
+        expiresAt,
+        rememberMe,
       },
     };
   }

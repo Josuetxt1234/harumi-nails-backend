@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -141,15 +142,13 @@ export class DailyRegistersService {
     });
   }
 
-  async getById(registerId: string): Promise<DailyRegisterResponse> {
-    const register =
-      await this.dailyRegistersRepository.findActiveById(registerId);
+  async getById(
+    registerId: string,
+    actor: AuthenticatedUser,
+  ): Promise<DailyRegisterResponse> {
+    const register = await this.findActiveRegisterOrFail(registerId);
 
-    if (!register) {
-      throw new NotFoundException(
-        DAILY_REGISTERS_ERROR_MESSAGES.REGISTER_NOT_FOUND,
-      );
-    }
+    this.assertCanAccessRegister(register, actor);
 
     return register;
   }
@@ -158,14 +157,9 @@ export class DailyRegistersService {
     registerId: string,
     actor: AuthenticatedUser,
   ): Promise<void> {
-    const register =
-      await this.dailyRegistersRepository.findActiveById(registerId);
+    const register = await this.findActiveRegisterOrFail(registerId);
 
-    if (!register) {
-      throw new NotFoundException(
-        DAILY_REGISTERS_ERROR_MESSAGES.REGISTER_NOT_FOUND,
-      );
-    }
+    this.assertCanAccessRegister(register, actor);
 
     await this.dailyRegistersRepository.softDelete(registerId, actor.id);
   }
@@ -200,6 +194,38 @@ export class DailyRegistersService {
         DAILY_REGISTERS_ERROR_MESSAGES.INVALID_DATE_RANGE,
       );
     }
+  }
+
+  private async findActiveRegisterOrFail(
+    registerId: string,
+  ): Promise<DailyRegisterResponse> {
+    const register =
+      await this.dailyRegistersRepository.findActiveById(registerId);
+
+    if (!register) {
+      throw new NotFoundException(
+        DAILY_REGISTERS_ERROR_MESSAGES.REGISTER_NOT_FOUND,
+      );
+    }
+
+    return register;
+  }
+
+  /**
+   * A non-elevated actor may only reach the registers booked under their own
+   * mesa id, so guessing another register's uuid leads nowhere.
+   */
+  private assertCanAccessRegister(
+    register: DailyRegisterResponse,
+    actor: AuthenticatedUser,
+  ): void {
+    if (this.isElevated(actor) || register.mesaUserId === actor.id) {
+      return;
+    }
+
+    throw new ForbiddenException(
+      DAILY_REGISTERS_ERROR_MESSAGES.REGISTER_FORBIDDEN,
+    );
   }
 
   private getSalonTimezone(): string {

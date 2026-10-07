@@ -2,10 +2,12 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Session } from '@prisma/client';
-import { AUTH_ERROR_MESSAGES } from '../common/constants/auth.constants';
+import {
+  AUTH_ERROR_MESSAGES,
+  JWT_ALGORITHM,
+} from '../common/constants/auth.constants';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { HashingService } from '../hashing/hashing.service';
-import { AuthTokens } from './interfaces/auth-response.interface';
 
 @Injectable()
 export class TokenService {
@@ -37,24 +39,12 @@ export class TokenService {
     const accessToken = await this.jwtService.signAsync(payload, {
       secret: accessSecret,
       expiresIn: expiresInConfig,
+      algorithm: JWT_ALGORITHM,
     });
 
     return {
       accessToken,
       expiresIn: this.parseExpiresInToSeconds(expiresInConfig),
-    };
-  }
-
-  async buildAuthTokens(
-    payload: JwtPayload,
-    refreshToken: string,
-  ): Promise<AuthTokens> {
-    const { accessToken, expiresIn } = await this.generateAccessToken(payload);
-
-    return {
-      accessToken,
-      refreshToken,
-      expiresIn,
     };
   }
 

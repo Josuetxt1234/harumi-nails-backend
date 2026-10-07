@@ -16,7 +16,9 @@ import {
   PermissionsAny,
 } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constants';
+import { SYSTEM_ROLES } from '../common/constants/roles.constants';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { CreateDailyRegisterDto } from './dto/create-daily-register.dto';
@@ -39,8 +41,11 @@ export class DailyRegistersController {
     return this.dailyRegistersService.create(actor, createDailyRegisterDto);
   }
 
+  // Listing every manicurist is an administrative concern: MESA books its own
+  // sales against the userId carried by the JWT and never needs the roster.
   @Get('mesa-users')
-  @Permissions(PERMISSIONS.DAILY_REGISTERS_CREATE)
+  @Permissions(PERMISSIONS.DAILY_REGISTERS_READ)
+  @Roles(SYSTEM_ROLES.ADMIN, SYSTEM_ROLES.SUPER_ADMIN)
   listMesaUsers() {
     return this.dailyRegistersService.listActiveMesaUsers();
   }
@@ -65,8 +70,11 @@ export class DailyRegistersController {
 
   @Get(':id')
   @Permissions(PERMISSIONS.DAILY_REGISTERS_READ)
-  getById(@Param('id', ParseUUIDPipe) id: string) {
-    return this.dailyRegistersService.getById(id);
+  getById(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.dailyRegistersService.getById(id, actor);
   }
 
   @Delete(':id')

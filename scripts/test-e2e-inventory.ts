@@ -1,19 +1,18 @@
 import { PrismaClient } from '@prisma/client';
 import * as request from 'supertest';
+import {
+  demoAdminAccount,
+  demoMesaAccount,
+  seedAdminAccount,
+  seedMesaAccount,
+} from '../prisma/seed-credentials';
 
 const prisma = new PrismaClient();
 const API_BASE = process.env.E2E_API_URL ?? 'http://localhost:3000';
 const api = request(API_BASE);
 
-const ADMIN_CANDIDATES = [
-  { email: 'admin@haruminails.com', password: 'Admin123!' },
-  { email: 'admin@harumi.com', password: 'Admin1234*' },
-];
-
-const MESA_CANDIDATES = [
-  { email: 'mesa10@haruminails.com', password: 'Mesa1234!' },
-  { email: 'gabriela.rios@harumi.com', password: 'Admin1234*' },
-];
+const ADMIN_CANDIDATES = [seedAdminAccount(), demoAdminAccount()];
+const MESA_CANDIDATES = [seedMesaAccount(), demoMesaAccount()];
 
 const CATEGORY_NAME = 'Esmaltes';
 const MATERIAL_NAME = 'Esmalte Semi-Permanente Rojo';

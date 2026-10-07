@@ -1,25 +1,35 @@
 import { AdvanceStatus, PayrollStatus, PrismaClient } from '@prisma/client';
+import {
+  demoAdminAccount,
+  demoMesaAccount,
+  generateTestPassword,
+  seedAdminAccount,
+  seedMesaAccount,
+} from '../prisma/seed-credentials';
 
 const prisma = new PrismaClient();
 const API = process.env.E2E_API_URL ?? 'http://localhost:3000/api';
 const MARKER = '[E2E-MASTER]';
 const SALON_TZ = 'America/Guayaquil';
 
-const ADMIN_CANDIDATES = [
-  { email: 'admin@haruminails.com', password: 'Admin123!' },
-  { email: 'admin@harumi.com', password: 'Admin1234*' },
-];
+const ADMIN_CANDIDATES = [seedAdminAccount(), demoAdminAccount()];
+const MESA_CANDIDATES = [seedMesaAccount(), demoMesaAccount()];
 
-const MESA_CANDIDATES = [
-  { email: 'mesa10@haruminails.com', password: 'Mesa1234!' },
-  { email: 'gabriela.rios@harumi.com', password: 'Admin1234*' },
-];
-
-type LoginResponse = {
+type LoginBody = {
   accessToken: string;
-  refreshToken: string;
-  user: { id: string; email: string; roles: string[]; permissions: string[] };
+  user: {
+    id: string;
+    email: string;
+    roles: string[];
+    permissions: string[];
+    mustChangePassword: boolean;
+  };
 };
+
+// The refresh token now travels in an HttpOnly cookie, never in the body.
+type LoginResponse = LoginBody & { refreshCookie: string };
+
+const REFRESH_COOKIE = 'harumi_refresh_token';
 
 type CheckResult = {
   module: string;
@@ -91,13 +101,17 @@ async function request<T>(
     method?: string;
     token?: string;
     body?: unknown;
+    refreshCookie?: string;
   } = {},
-): Promise<{ status: number; data: T; raw: string }> {
+): Promise<{ status: number; data: T; raw: string; refreshCookie: string }> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
   if (options.token) {
     headers.Authorization = `Bearer ${options.token}`;
+  }
+  if (options.refreshCookie) {
+    headers.Cookie = `${REFRESH_COOKIE}=${options.refreshCookie}`;
   }
 
   const response = await fetch(`${API}${path}`, {
@@ -114,7 +128,11 @@ async function request<T>(
       data = {} as T;
     }
   }
-  return { status: response.status, data, raw };
+  const setCookie = response.headers.get('set-cookie') ?? '';
+  const refreshCookie =
+    new RegExp(`${REFRESH_COOKIE}=([^;]*)`).exec(setCookie)?.[1] ?? '';
+
+  return { status: response.status, data, raw, refreshCookie };
 }
 
 async function check(
@@ -222,16 +240,59 @@ async function loginWith(
 ): Promise<LoginResponse> {
   let lastRaw = '';
   for (const candidate of candidates) {
-    const result = await request<LoginResponse>('/auth/login', {
+    const result = await request<LoginBody>('/auth/login', {
       method: 'POST',
       body: { email: candidate.email, password: candidate.password },
     });
     if (result.status === 200 && result.data.accessToken) {
-      return result.data;
+      const session = { ...result.data, refreshCookie: result.refreshCookie };
+
+      return session.user.mustChangePassword
+        ? settleTemporaryPassword(session, candidate)
+        : session;
     }
     lastRaw = `${candidate.email} HTTP ${result.status} ${result.raw.slice(0, 120)}`;
   }
   throw new CheckError(`Could not authenticate ${label}: ${lastRaw}`);
+}
+
+/**
+ * Seeded accounts carry a temporary password, which MustChangePasswordGuard
+ * blocks on every route but the escape hatch. Re-setting the same password
+ * clears the flag without moving the credential the suite depends on.
+ */
+async function settleTemporaryPassword(
+  session: LoginResponse,
+  candidate: { email: string; password: string },
+): Promise<LoginResponse> {
+  const settled = await request('/users/me/password', {
+    method: 'PATCH',
+    token: session.accessToken,
+    body: {
+      currentPassword: candidate.password,
+      newPassword: candidate.password,
+    },
+  });
+
+  if (settled.status !== 204) {
+    throw new CheckError(
+      `Could not clear the temporary password of ${candidate.email}: HTTP ${settled.status} ${settled.raw.slice(0, 120)}`,
+    );
+  }
+
+  // Changing the password revokes every session, so the old token is dead.
+  const reissued = await request<LoginBody>('/auth/login', {
+    method: 'POST',
+    body: { email: candidate.email, password: candidate.password },
+  });
+
+  if (reissued.status !== 200) {
+    throw new CheckError(
+      `Could not re-authenticate ${candidate.email}: HTTP ${reissued.status} ${reissued.raw.slice(0, 120)}`,
+    );
+  }
+
+  return { ...reissued.data, refreshCookie: reissued.refreshCookie };
 }
 
 async function voidRegister(token: string, id: string): Promise<void> {
@@ -402,7 +463,8 @@ async function main(): Promise<void> {
   const week = currentPayrollWeek();
   const stamp = Date.now();
   const e2eEmail = `e2e.master.${stamp}@haruminails.com`;
-  const e2ePassword = 'E2eMaster99!';
+  const e2ePassword = generateTestPassword();
+  const e2eSettledPassword = generateTestPassword();
   const serviceName = `${MARKER} Manicure ${stamp}`;
   const materialCode = `E2E-MST-${stamp}`;
   const listPrice = 20;
@@ -415,8 +477,10 @@ async function main(): Promise<void> {
 
   await check('M1 Auth & RBAC', 'Valid ADMIN login', async () => {
     admin = await loginWith(ADMIN_CANDIDATES, 'ADMIN');
-    if (!admin.refreshToken) {
-      throw new CheckError('Admin login did not return a refreshToken');
+    if (!admin.refreshCookie) {
+      throw new CheckError(
+        'Admin login did not set the HttpOnly refresh token cookie',
+      );
     }
   });
 
@@ -490,23 +554,72 @@ async function main(): Promise<void> {
       },
     });
     expectStatus(createMaterial.status, 403, createMaterial.raw, 'MESA POST /inventory/materials');
+
+    const mesaRoster = await request('/daily-registers/mesa-users', {
+      token: seedMesa.accessToken,
+    });
+    expectStatus(
+      mesaRoster.status,
+      403,
+      mesaRoster.raw,
+      'MESA GET /daily-registers/mesa-users',
+    );
   });
 
-  await check('M1 Auth & RBAC', 'Logout revokes refresh (401)', async () => {
+  await check('M1 Auth & RBAC', 'Logout revokes refresh and access (401)', async () => {
     const sessionLogin = await loginWith(ADMIN_CANDIDATES, 'ADMIN session');
     const logout = await request('/auth/logout', {
       method: 'POST',
       token: sessionLogin.accessToken,
-      body: { refreshToken: sessionLogin.refreshToken },
+      refreshCookie: sessionLogin.refreshCookie,
     });
     expectStatus(logout.status, 204, logout.raw, 'logout');
 
     const refresh = await request('/auth/refresh', {
       method: 'POST',
-      body: { refreshToken: sessionLogin.refreshToken },
+      refreshCookie: sessionLogin.refreshCookie,
     });
     expectStatus(refresh.status, 401, refresh.raw, 'refresh revocado');
+
+    const profile = await request('/auth/me', {
+      token: sessionLogin.accessToken,
+    });
+    expectStatus(profile.status, 401, profile.raw, 'access token revocado');
   });
+
+  await check('M1 Auth & RBAC', 'Refresh reuse revokes every session', async () => {
+    const first = await loginWith(ADMIN_CANDIDATES, 'ADMIN rotation');
+    const second = await loginWith(ADMIN_CANDIDATES, 'ADMIN parallel session');
+
+    const rotated = await request<LoginBody>('/auth/refresh', {
+      method: 'POST',
+      refreshCookie: first.refreshCookie,
+    });
+    expectStatus(rotated.status, 200, rotated.raw, 'primera rotacion');
+
+    // Replaying the consumed token outside the rotation grace window must be
+    // treated as a stolen token.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const replay = await request('/auth/refresh', {
+      method: 'POST',
+      refreshCookie: first.refreshCookie,
+    });
+    expectStatus(replay.status, 401, replay.raw, 'reuso de refresh token');
+
+    const otherSession = await request('/auth/me', {
+      token: second.accessToken,
+    });
+    expectStatus(
+      otherSession.status,
+      401,
+      otherSession.raw,
+      'sesion paralela revocada',
+    );
+  });
+
+  // The reuse check revokes every ADMIN session on purpose, including the one
+  // the remaining modules run on.
+  admin = await loginWith(ADMIN_CANDIDATES, 'ADMIN');
 
   console.log('\n💅  M2: Service Catalog');
   let mesaRoleId = '';
@@ -538,6 +651,54 @@ async function main(): Promise<void> {
     expectStatus(createdUser.status, 201, createdUser.raw, 'POST /users');
     e2eUserId = createdUser.data.id;
     created.userIds.add(e2eUserId);
+  });
+
+  await check('M2 Catalog', 'Temporary password blocks every regular route', async () => {
+    const temporary = await request<LoginBody>('/auth/login', {
+      method: 'POST',
+      body: { email: e2eEmail, password: e2ePassword },
+    });
+    expectStatus(temporary.status, 200, temporary.raw, 'login temporal');
+    expectEqual(
+      temporary.data.user.mustChangePassword,
+      true,
+      'mustChangePassword del usuario nuevo',
+    );
+
+    const token = temporary.data.accessToken;
+
+    const blocked = await request('/daily-registers', { token });
+    expectStatus(blocked.status, 403, blocked.raw, 'GET /daily-registers bloqueado');
+    if (!blocked.raw.includes('contraseña temporal')) {
+      throw new CheckError(`Mensaje inesperado: ${blocked.raw.slice(0, 160)}`);
+    }
+
+    // The escape hatch has to stay open or the account would be unrecoverable.
+    const profile = await request('/auth/me', { token });
+    expectStatus(profile.status, 200, profile.raw, 'GET /auth/me permitido');
+
+    const changed = await request('/users/me/password', {
+      method: 'PATCH',
+      token,
+      body: { currentPassword: e2ePassword, newPassword: e2eSettledPassword },
+    });
+    expectStatus(changed.status, 204, changed.raw, 'PATCH /users/me/password');
+
+    const settled = await request<LoginBody>('/auth/login', {
+      method: 'POST',
+      body: { email: e2eEmail, password: e2eSettledPassword },
+    });
+    expectStatus(settled.status, 200, settled.raw, 'login tras el cambio');
+    expectEqual(
+      settled.data.user.mustChangePassword,
+      false,
+      'mustChangePassword tras el cambio',
+    );
+
+    const allowed = await request('/daily-registers', {
+      token: settled.data.accessToken,
+    });
+    expectStatus(allowed.status, 200, allowed.raw, 'GET /daily-registers liberado');
   });
 
   await check('M2 Catalog', 'Create service with category, price and commission', async () => {
@@ -636,6 +797,41 @@ async function main(): Promise<void> {
     expectMoney(ticket.data.totalPaid, listPrice, 'total CASH');
     expectMoney(ticket.data.cardFeeAmount, 0, 'sin recargo');
     expectMoney(ticket.data.totalCommission, expectedLineCommission, 'CASH commission');
+  });
+
+  await check('M3 POS', "MESA cannot read another mesa's ticket", async () => {
+    if (!weekdayId) {
+      throw new CheckError('Missing ticket id');
+    }
+    const foreignTicket = await request(`/daily-registers/${weekdayId}`, {
+      token: seedMesa.accessToken,
+    });
+    expectStatus(
+      foreignTicket.status,
+      403,
+      foreignTicket.raw,
+      'MESA GET /daily-registers/:id ajeno',
+    );
+  });
+
+  await check('M3 POS', 'MESA sale is bound to its own userId', async () => {
+    if (!serviceId || !e2eUserId) {
+      throw new CheckError('Missing service or MESA user');
+    }
+    const ticket = await request<RegisterResponse>('/daily-registers', {
+      method: 'POST',
+      token: seedMesa.accessToken,
+      body: {
+        // Spoofed owner: the backend must ignore it and use the JWT subject.
+        mesaUserId: e2eUserId,
+        clientName: `${MARKER} Mesa propia`,
+        paymentMethod: 'CASH',
+        items: [{ serviceId, quantity: 1 }],
+      },
+    });
+    expectStatus(ticket.status, 201, ticket.raw, 'ticket MESA');
+    created.registerIds.add(ticket.data.id);
+    expectEqual(ticket.data.mesaUserId, seedMesa.user.id, 'mesaUserId del JWT');
   });
 
   await check('M3 POS', 'Transfer sale', async () => {

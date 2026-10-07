@@ -1,4 +1,8 @@
 import { AdvanceStatus, PayrollStatus, PrismaClient } from '@prisma/client';
+import {
+  seedAdminAccount,
+  seedMesaAccount,
+} from '../prisma/seed-credentials';
 
 const prisma = new PrismaClient();
 const API = 'http://localhost:3000/api';
@@ -56,7 +60,8 @@ function money(value: number): number {
 
 async function main(): Promise<void> {
   const failures: string[] = [];
-  const admin = await login('admin@haruminails.com', 'Admin123!');
+  const adminAccount = seedAdminAccount();
+  const admin = await login(adminAccount.email, adminAccount.password);
   const requiredAdmin = [
     'advances.create',
     'advances.cancel',
@@ -70,7 +75,8 @@ async function main(): Promise<void> {
     }
   }
 
-  const mesa = await login('mesa10@haruminails.com', 'Mesa1234!');
+  const mesaAccount = seedMesaAccount();
+  const mesa = await login(mesaAccount.email, mesaAccount.password);
   if (!mesa.user.permissions.includes('payroll.read')) {
     failures.push('MESA JWT missing payroll.read');
   }

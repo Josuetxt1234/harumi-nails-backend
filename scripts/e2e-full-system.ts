@@ -1,13 +1,18 @@
 import { AdvanceStatus, PayrollStatus, PrismaClient } from '@prisma/client';
+import {
+  generateTestPassword,
+  seedAdminAccount,
+  seedMesaAccount,
+} from '../prisma/seed-credentials';
 
 const prisma = new PrismaClient();
 const API = process.env.E2E_API_URL ?? 'http://localhost:3000/api';
 const MARKER = '[E2E-FULL]';
 const SALON_TZ = 'America/Guayaquil';
+const REFRESH_COOKIE = 'harumi_refresh_token';
 
 type LoginResponse = {
   accessToken: string;
-  refreshToken: string;
   user: { id: string; email: string; roles: string[]; permissions: string[] };
 };
 
@@ -65,13 +70,17 @@ async function request<T>(
     method?: string;
     token?: string;
     body?: unknown;
+    refreshCookie?: string;
   } = {},
-): Promise<{ status: number; data: T; raw: string }> {
+): Promise<{ status: number; data: T; raw: string; refreshCookie: string }> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
   if (options.token) {
     headers.Authorization = `Bearer ${options.token}`;
+  }
+  if (options.refreshCookie) {
+    headers.Cookie = `${REFRESH_COOKIE}=${options.refreshCookie}`;
   }
 
   const response = await fetch(`${API}${path}`, {
@@ -88,7 +97,11 @@ async function request<T>(
       data = {} as T;
     }
   }
-  return { status: response.status, data, raw };
+  const setCookie = response.headers.get('set-cookie') ?? '';
+  const refreshCookie =
+    new RegExp(`${REFRESH_COOKIE}=([^;]*)`).exec(setCookie)?.[1] ?? '';
+
+  return { status: response.status, data, raw, refreshCookie };
 }
 
 async function check(
@@ -193,7 +206,12 @@ function currentPayrollWeek(): { start: string; end: string; saturdayUtc: Date }
 async function login(
   email: string,
   password: string,
-): Promise<{ status: number; data: LoginResponse; raw: string }> {
+): Promise<{
+  status: number;
+  data: LoginResponse;
+  raw: string;
+  refreshCookie: string;
+}> {
   return request<LoginResponse>('/auth/login', {
     method: 'POST',
     body: { email, password },
@@ -330,7 +348,7 @@ async function main(): Promise<void> {
   const week = currentPayrollWeek();
   const stamp = Date.now();
   const e2eEmail = `e2e.full.${stamp}@haruminails.com`;
-  const e2ePassword = 'E2eFull99!';
+  const e2ePassword = generateTestPassword();
   const serviceName = `${MARKER} Manicure ${stamp}`;
 
   console.log('\n▶ Module 1: Authentication, Users and RBAC');
@@ -338,10 +356,13 @@ async function main(): Promise<void> {
   let seedMesa!: LoginResponse;
 
   await check('M1 Authentication / RBAC', 'ADMIN login with valid credentials', async () => {
-    const result = await login('admin@haruminails.com', 'Admin123!');
+    const account = seedAdminAccount();
+    const result = await login(account.email, account.password);
     expectStatus(result.status, 200, result.raw, 'login admin');
-    if (!result.data.accessToken || !result.data.refreshToken) {
-      throw new CheckError('Admin login did not return tokens');
+    if (!result.data.accessToken || !result.refreshCookie) {
+      throw new CheckError(
+        'Admin login did not return an access token and a refresh cookie',
+      );
     }
     admin = result.data;
   });
@@ -351,8 +372,9 @@ async function main(): Promise<void> {
   }
 
   await check('M1 Authentication / RBAC', 'Seed MESA login with valid credentials', async () => {
-    const result = await login('mesa10@haruminails.com', 'Mesa1234!');
-    expectStatus(result.status, 200, result.raw, 'login mesa10');
+    const account = seedMesaAccount();
+    const result = await login(account.email, account.password);
+    expectStatus(result.status, 200, result.raw, 'login seed MESA');
     seedMesa = result.data;
   });
 
@@ -389,19 +411,19 @@ async function main(): Promise<void> {
   );
 
   await check('M1 Authentication / RBAC', 'Session revocation (logout + refresh 401)', async () => {
-    const sessionLogin = await login('admin@haruminails.com', 'Admin123!');
+    const account = seedAdminAccount();
+    const sessionLogin = await login(account.email, account.password);
     expectStatus(sessionLogin.status, 200, sessionLogin.raw, 'session login');
     const logout = await request('/auth/logout', {
       method: 'POST',
       token: sessionLogin.data.accessToken,
-      body: { refreshToken: sessionLogin.data.refreshToken },
+      refreshCookie: sessionLogin.refreshCookie,
     });
     expectStatus(logout.status, 204, logout.raw, 'logout');
 
-    const hashed = sessionLogin.data.refreshToken;
     const refresh = await request('/auth/refresh', {
       method: 'POST',
-      body: { refreshToken: hashed },
+      refreshCookie: sessionLogin.refreshCookie,
     });
     expectStatus(refresh.status, 401, refresh.raw, 'refresh revocado');
 

@@ -18,6 +18,8 @@ export interface UserProfileBase {
   phone: string | null;
   avatarUrl: string | null;
   roles: string[];
+  /** True while the account still holds a password issued by an admin. */
+  mustChangePassword: boolean;
 }
 
 export interface UserProfile extends UserProfileBase {
@@ -64,6 +66,7 @@ export interface CreateUserData {
   phone?: string | null;
   avatarUrl?: string | null;
   isActive?: boolean;
+  mustChangePassword?: boolean;
   createdById: string;
 }
 
@@ -73,6 +76,7 @@ export interface UpdateUserData {
   phone?: string | null;
   avatarUrl?: string | null;
   password?: string;
+  mustChangePassword?: boolean;
   updatedById: string;
 }
 

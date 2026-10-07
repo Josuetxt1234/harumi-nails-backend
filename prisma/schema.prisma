@@ -19,6 +19,10 @@ model User {
   isActive  Boolean @default(true)
   avatarUrl String?
 
+  /// Set when an admin creates the account or resets its password, so the
+  /// temporary credential cannot be kept as the permanent one.
+  mustChangePassword Boolean @default(true)
+
   // Soft delete & base audit
   isDeleted Boolean   @default(false)
   createdAt DateTime  @default(now())

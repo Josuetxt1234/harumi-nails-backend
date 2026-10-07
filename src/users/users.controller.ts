@@ -15,6 +15,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { AllowTemporaryPassword } from '../auth/decorators/allow-temporary-password.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constants';
@@ -59,6 +60,7 @@ export class UsersController {
   }
 
   @Patch('me/password')
+  @AllowTemporaryPassword()
   @Permissions(PERMISSIONS.PROFILE_CHANGE_PASSWORD)
   @HttpCode(HttpStatus.NO_CONTENT)
   async changeMyPassword(
