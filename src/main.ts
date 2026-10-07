@@ -51,8 +51,11 @@ async function bootstrap() {
   });
 
   const port = configService.get<number>('port') ?? 3000;
-  await app.listen(port);
+  // Railway injects PORT and routes traffic to 0.0.0.0. Binding only to
+  // localhost would make the service unreachable from the public proxy.
+  await app.listen(port, '0.0.0.0');
 
+  logger.log(`Listening on 0.0.0.0:${port}`);
   logger.log(`Allowed CORS origins: ${allowedOrigins.join(', ') || 'none'}`);
 }
 
