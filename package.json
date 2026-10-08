@@ -21,7 +21,7 @@
     "test:e2e:inventory": "ts-node scripts/test-e2e-inventory.ts",
     "test:e2e:master": "ts-node scripts/test-e2e-master.ts",
     "db:seed": "prisma db seed",
-    "seed:demo": "ts-node prisma/seed-demo.ts",
+    "seed": "prisma db seed",
     "email:test": "ts-node scripts/test-email.ts"
   },
   "prisma": {

@@ -1,4 +1,4 @@
-import { PayrollStatus } from '@prisma/client';
+import { AdvanceStatus, PayrollStatus } from '@prisma/client';
 
 export interface PayrollTotals {
   grossSales: number;
@@ -30,6 +30,35 @@ export interface PayrollResponse extends PayrollTotals {
   closedById: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface PayrollServiceLine {
+  serviceName: string;
+  quantity: number;
+  lineSubtotal: number;
+  lineCommission: number;
+}
+
+export interface PayrollRegisterLine {
+  id: string;
+  clientName: string;
+  createdAt: Date;
+  totalPaid: number;
+  totalCommission: number;
+  services: PayrollServiceLine[];
+}
+
+export interface PayrollAdvanceLine {
+  id: string;
+  amount: number;
+  reason: string | null;
+  date: Date;
+  status: AdvanceStatus;
+}
+
+export interface PayrollDetail extends PayrollResponse {
+  registers: PayrollRegisterLine[];
+  advances: PayrollAdvanceLine[];
 }
 
 export interface PaginatedPayrolls {

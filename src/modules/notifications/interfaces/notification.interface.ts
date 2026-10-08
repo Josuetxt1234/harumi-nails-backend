@@ -7,7 +7,14 @@ export interface NotificationResponse {
   type: NotificationType;
   isRead: boolean;
   targetRole: NotificationRole;
+  targetUserId: string | null;
   createdAt: Date;
+}
+
+/** Role broadcasts (targetUserId null) plus rows addressed to this user. */
+export interface NotificationAudience {
+  userId: string;
+  targetRoles: NotificationRole[];
 }
 
 export interface NotificationsFeed {
@@ -20,4 +27,5 @@ export interface CreateNotificationData {
   message: string;
   type: NotificationType;
   targetRole?: NotificationRole;
+  targetUserId?: string;
 }

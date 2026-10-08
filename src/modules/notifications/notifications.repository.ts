@@ -3,6 +3,7 @@ import { NotificationRole, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateNotificationData,
+  NotificationAudience,
   NotificationResponse,
 } from './interfaces/notification.interface';
 
@@ -22,40 +23,52 @@ export class NotificationsRepository {
         message: data.message,
         type: data.type,
         targetRole: data.targetRole ?? NotificationRole.SUPER_ADMIN,
+        targetUserId: data.targetUserId ?? null,
       },
     });
 
     return created;
   }
 
-  async findUnread(
-    targetRoles: NotificationRole[],
-  ): Promise<NotificationResponse[]> {
-    if (targetRoles.length === 0) {
-      return [];
-    }
+  async findUnreadIds(audience: NotificationAudience): Promise<string[]> {
+    const rows = await this.prisma.notification.findMany({
+      where: {
+        isRead: false,
+        ...this.whereFor(audience),
+      },
+      select: { id: true },
+    });
 
+    return rows.map((row) => row.id);
+  }
+
+  async countUnread(audience: NotificationAudience): Promise<number> {
+    return this.prisma.notification.count({
+      where: {
+        isRead: false,
+        ...this.whereFor(audience),
+      },
+    });
+  }
+
+  async findUnread(
+    audience: NotificationAudience,
+  ): Promise<NotificationResponse[]> {
     return this.prisma.notification.findMany({
       where: {
         isRead: false,
-        targetRole: { in: targetRoles },
+        ...this.whereFor(audience),
       },
       orderBy: { createdAt: 'desc' },
     });
   }
 
   async findRecent(
-    targetRoles: NotificationRole[],
+    audience: NotificationAudience,
     take = 20,
   ): Promise<NotificationResponse[]> {
-    if (targetRoles.length === 0) {
-      return [];
-    }
-
     return this.prisma.notification.findMany({
-      where: {
-        targetRole: { in: targetRoles },
-      },
+      where: this.whereFor(audience),
       orderBy: { createdAt: 'desc' },
       take,
     });
@@ -74,20 +87,38 @@ export class NotificationsRepository {
     });
   }
 
-  async markAllAsRead(targetRoles: NotificationRole[]): Promise<number> {
-    if (targetRoles.length === 0) {
-      return 0;
-    }
-
+  async markAllAsRead(audience: NotificationAudience): Promise<number> {
     const result = await this.prisma.notification.updateMany({
       where: {
         isRead: false,
-        targetRole: { in: targetRoles },
+        ...this.whereFor(audience),
       },
       data: { isRead: true },
     });
 
     return result.count;
+  }
+
+  private whereFor(
+    audience: NotificationAudience,
+  ): Prisma.NotificationWhereInput {
+    const personal: Prisma.NotificationWhereInput = {
+      targetUserId: audience.userId,
+    };
+
+    if (audience.targetRoles.length === 0) {
+      return personal;
+    }
+
+    return {
+      OR: [
+        {
+          targetRole: { in: audience.targetRoles },
+          targetUserId: null,
+        },
+        { targetUserId: audience.userId },
+      ],
+    };
   }
 
   async findUserName(

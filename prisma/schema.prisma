@@ -82,6 +82,7 @@ model User {
   createdMaterials           Material[]          @relation("MaterialCreatedBy")
   updatedMaterials           Material[]          @relation("MaterialUpdatedBy")
   inventoryMovements         InventoryMovement[] @relation("InventoryMovementCreatedBy")
+  notifications              Notification[]      @relation("NotificationTargetUser")
 
   @@index([email])
   @@index([isDeleted])
@@ -251,6 +252,7 @@ model Service {
   id                   String    @id @default(uuid())
   name                 String
   category             String
+  description          String?
   price                Decimal   @db.Decimal(10, 2)
   commissionPercentage Decimal   @default(50.00) @db.Decimal(5, 2)
   isActive             Boolean   @default(true)
@@ -504,6 +506,8 @@ model InventoryMovement {
 enum NotificationType {
   VOUCHER_CREATED
   VOUCHER_CANCELLED
+  PAYROLL_GENERATED
+  PAYROLL_CLOSED
   SYSTEM
 }
 
@@ -518,13 +522,17 @@ model Notification {
   title      String
   message    String
   type       NotificationType
-  isRead     Boolean            @default(false)
-  targetRole NotificationRole   @default(SUPER_ADMIN)
-  createdAt  DateTime           @default(now())
+  isRead       Boolean            @default(false)
+  targetRole   NotificationRole   @default(SUPER_ADMIN)
+  targetUserId String?             @map("target_user_id")
+  targetUser   User?              @relation("NotificationTargetUser", fields: [targetUserId], references: [id], onDelete: Restrict)
+  createdAt    DateTime           @default(now())
 
   @@index([isRead])
   @@index([targetRole])
+  @@index([targetUserId])
   @@index([createdAt])
   @@index([targetRole, isRead, createdAt])
+  @@index([targetUserId, isRead, createdAt])
   @@map("notifications")
 }

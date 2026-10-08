@@ -2,11 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { AdvanceStatus, PayrollStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { toMoney } from '../../common/utils/money.util';
+import { MESA_CLOSED_PAYROLL_HISTORY_LIMIT } from './constants/payroll.constants';
 import {
   CreatePayrollData,
   ListPayrollFilters,
   PaginatedPayrolls,
+  PayrollAdvanceLine,
+  PayrollDetail,
+  PayrollRegisterLine,
   PayrollResponse,
+  PayrollTotals,
 } from './interfaces/payroll.interface';
 import {
   PayrollAdvanceInput,
@@ -58,7 +63,7 @@ export class PayrollRepository {
     mesaUserId: string,
     periodStart: Date,
     _periodEnd: Date,
-  ): Promise<{ id: string } | null> {
+  ): Promise<{ id: string; status: PayrollStatus } | null> {
     return client.payroll.findFirst({
       where: {
         mesaUserId,
@@ -72,7 +77,7 @@ export class PayrollRepository {
           ],
         },
       },
-      select: { id: true },
+      select: { id: true, status: true },
     });
   }
 
@@ -81,16 +86,22 @@ export class PayrollRepository {
     mesaUserId: string,
     periodStart: Date,
     periodEnd: Date,
+    alsoLinkedToPayrollId: string | null = null,
   ): Promise<PayrollRegisterInput[]> {
     return client.dailyRegister.findMany({
       where: {
         mesaUserId,
         isDeleted: false,
-        payrollId: null,
         createdAt: {
           gte: periodStart,
           lte: periodEnd,
         },
+        OR: [
+          { payrollId: null },
+          ...(alsoLinkedToPayrollId
+            ? [{ payrollId: alsoLinkedToPayrollId }]
+            : []),
+        ],
       },
       select: {
         id: true,
@@ -110,15 +121,26 @@ export class PayrollRepository {
     client: PrismaClientLike,
     mesaUserId: string,
     periodEnd: Date,
+    alsoLinkedToPayrollId: string | null = null,
   ): Promise<PayrollAdvanceInput[]> {
     return client.advance.findMany({
       where: {
         mesaUserId,
         isDeleted: false,
-        status: AdvanceStatus.PENDING,
-        date: {
-          lte: periodEnd,
-        },
+        OR: [
+          {
+            status: AdvanceStatus.PENDING,
+            date: { lte: periodEnd },
+          },
+          ...(alsoLinkedToPayrollId
+            ? [
+                {
+                  payrollId: alsoLinkedToPayrollId,
+                  status: AdvanceStatus.APPLIED,
+                },
+              ]
+            : []),
+        ],
       },
       select: {
         id: true,
@@ -153,6 +175,54 @@ export class PayrollRepository {
     });
 
     return this.mapToResponse(created);
+  }
+
+  async releaseDraftLinks(
+    client: PrismaClientLike,
+    payrollId: string,
+  ): Promise<void> {
+    await client.dailyRegister.updateMany({
+      where: { payrollId },
+      data: { payrollId: null },
+    });
+    await client.advance.updateMany({
+      where: {
+        payrollId,
+        status: AdvanceStatus.APPLIED,
+        isDeleted: false,
+      },
+      data: {
+        status: AdvanceStatus.PENDING,
+        payrollId: null,
+      },
+    });
+  }
+
+  async updateDraft(
+    client: PrismaClientLike,
+    id: string,
+    totals: PayrollTotals,
+  ): Promise<PayrollResponse> {
+    const updated = await client.payroll.update({
+      where: { id },
+      data: {
+        grossSales: new Prisma.Decimal(totals.grossSales.toFixed(2)),
+        baseCommissionTotal: new Prisma.Decimal(
+          totals.baseCommissionTotal.toFixed(2),
+        ),
+        weekendBonusTotal: new Prisma.Decimal(
+          totals.weekendBonusTotal.toFixed(2),
+        ),
+        advancesDeductionTotal: new Prisma.Decimal(
+          totals.advancesDeductionTotal.toFixed(2),
+        ),
+        netPayable: new Prisma.Decimal(totals.netPayable.toFixed(2)),
+        status: PayrollStatus.DRAFT,
+      },
+      include: payrollInclude,
+    });
+
+    return this.mapToResponse(updated);
   }
 
   async linkRegistersAndAdvances(
@@ -222,6 +292,61 @@ export class PayrollRepository {
     return this.mapToResponse(updated);
   }
 
+  async findRecentForMesa(
+    mesaUserId: string,
+    status?: PayrollStatus,
+  ): Promise<PaginatedPayrolls> {
+    const closedStatuses: PayrollStatus[] = [
+      PayrollStatus.CLOSED,
+      PayrollStatus.PAID,
+    ];
+    const includeDrafts = !status || status === PayrollStatus.DRAFT;
+    const includeClosed =
+      !status || closedStatuses.includes(status);
+
+    const [drafts, closed] = await Promise.all([
+      includeDrafts
+        ? this.prisma.payroll.findMany({
+            where: {
+              mesaUserId,
+              isDeleted: false,
+              status: PayrollStatus.DRAFT,
+            },
+            include: payrollInclude,
+            orderBy: { periodStart: 'desc' },
+          })
+        : Promise.resolve([]),
+      includeClosed
+        ? this.prisma.payroll.findMany({
+            where: {
+              mesaUserId,
+              isDeleted: false,
+              status: status && status !== PayrollStatus.DRAFT
+                ? status
+                : { in: closedStatuses },
+            },
+            include: payrollInclude,
+            orderBy: { periodStart: 'desc' },
+            take: MESA_CLOSED_PAYROLL_HISTORY_LIMIT,
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const data = [...drafts, ...closed].map((payroll) =>
+      this.mapToResponse(payroll),
+    );
+
+    return {
+      data,
+      meta: {
+        total: data.length,
+        page: 1,
+        limit: MESA_CLOSED_PAYROLL_HISTORY_LIMIT,
+        totalPages: 1,
+      },
+    };
+  }
+
   async findMany(filters: ListPayrollFilters): Promise<PaginatedPayrolls> {
     const where: Prisma.PayrollWhereInput = {
       isDeleted: false,
@@ -250,6 +375,81 @@ export class PayrollRepository {
         limit: filters.limit,
         totalPages: Math.ceil(total / filters.limit) || 1,
       },
+    };
+  }
+
+  async findDetailById(id: string): Promise<PayrollDetail | null> {
+    const payroll = await this.prisma.payroll.findFirst({
+      where: {
+        id,
+        isDeleted: false,
+      },
+      include: {
+        ...payrollInclude,
+        dailyRegisters: {
+          where: { isDeleted: false },
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            clientName: true,
+            createdAt: true,
+            totalPaid: true,
+            totalCommission: true,
+            details: {
+              select: {
+                quantity: true,
+                lineSubtotal: true,
+                lineCommission: true,
+                service: { select: { name: true } },
+              },
+            },
+          },
+        },
+        advances: {
+          where: { isDeleted: false },
+          orderBy: { date: 'asc' },
+          select: {
+            id: true,
+            amount: true,
+            reason: true,
+            date: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    if (!payroll) {
+      return null;
+    }
+
+    const registers: PayrollRegisterLine[] = payroll.dailyRegisters.map(
+      (register) => ({
+        id: register.id,
+        clientName: register.clientName,
+        createdAt: register.createdAt,
+        totalPaid: toMoney(register.totalPaid.toNumber()),
+        totalCommission: toMoney(register.totalCommission.toNumber()),
+        services: register.details.map((detail) => ({
+          serviceName: detail.service.name,
+          quantity: detail.quantity,
+          lineSubtotal: toMoney(detail.lineSubtotal.toNumber()),
+          lineCommission: toMoney(detail.lineCommission.toNumber()),
+        })),
+      }),
+    );
+    const advances: PayrollAdvanceLine[] = payroll.advances.map((advance) => ({
+      id: advance.id,
+      amount: toMoney(advance.amount.toNumber()),
+      reason: advance.reason,
+      date: advance.date,
+      status: advance.status,
+    }));
+
+    return {
+      ...this.mapToResponse(payroll),
+      registers,
+      advances,
     };
   }
 

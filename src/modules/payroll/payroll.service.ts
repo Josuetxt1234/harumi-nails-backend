@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -12,12 +13,14 @@ import {
   DEFAULT_SALON_TIMEZONE,
   getSalonPayrollWeekRange,
 } from '../../common/utils/date.util';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PAYROLL_ERROR_MESSAGES } from './constants/payroll.constants';
 import { GeneratePayrollDto } from './dto/generate-payroll.dto';
 import { QueryPayrollDto } from './dto/query-payroll.dto';
 import {
   PaginatedPayrolls,
+  PayrollDetail,
   PayrollPreview,
   PayrollResponse,
 } from './interfaces/payroll.interface';
@@ -26,10 +29,13 @@ import { PayrollRepository } from './payroll.repository';
 
 @Injectable()
 export class PayrollService {
+  private readonly logger = new Logger(PayrollService.name);
+
   constructor(
     private readonly payrollRepository: PayrollRepository,
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async calculatePreview(
@@ -39,17 +45,28 @@ export class PayrollService {
     const { start, end } = this.resolvePeriod(dto);
     const timeZone = this.getSalonTimezone();
 
+    const existing = await this.payrollRepository.findExistingForPeriod(
+      this.prisma,
+      mesaUser.id,
+      start,
+      end,
+    );
+    const draftId =
+      existing?.status === PayrollStatus.DRAFT ? existing.id : null;
+
     const [registers, advances] = await Promise.all([
       this.payrollRepository.findUnlinkedRegisters(
         this.prisma,
         mesaUser.id,
         start,
         end,
+        draftId,
       ),
       this.payrollRepository.findPendingAdvances(
         this.prisma,
         mesaUser.id,
         end,
+        draftId,
       ),
     ]);
 
@@ -68,24 +85,29 @@ export class PayrollService {
 
   async generate(
     dto: GeneratePayrollDto,
+    actor: AuthenticatedUser,
   ): Promise<PayrollResponse> {
     const mesaUser = await this.requireActiveMesaUser(dto.mesaUserId);
     const { start, end } = this.resolvePeriod(dto);
     const timeZone = this.getSalonTimezone();
+    const mesaUserName = `${mesaUser.firstName} ${mesaUser.lastName}`.trim();
 
-    return this.prisma.$transaction(async (tx) => {
-      const existingClosed =
-        await this.payrollRepository.findExistingForPeriod(
-          tx,
-          mesaUser.id,
-          start,
-          end,
-        );
+    const result = await this.prisma.$transaction(async (tx) => {
+      const existing = await this.payrollRepository.findExistingForPeriod(
+        tx,
+        mesaUser.id,
+        start,
+        end,
+      );
 
-      if (existingClosed) {
+      if (existing && existing.status !== PayrollStatus.DRAFT) {
         throw new ConflictException(
           PAYROLL_ERROR_MESSAGES.PERIOD_ALREADY_CLOSED,
         );
+      }
+
+      if (existing) {
+        await this.payrollRepository.releaseDraftLinks(tx, existing.id);
       }
 
       const registers = await this.payrollRepository.findUnlinkedRegisters(
@@ -100,17 +122,18 @@ export class PayrollService {
         end,
       );
       const totals = calculatePayrollTotals(registers, advances, timeZone);
-
-      const payroll = await this.payrollRepository.create(tx, {
-        mesaUserId: mesaUser.id,
-        periodStart: start,
-        periodEnd: end,
-        grossSales: totals.grossSales,
-        baseCommissionTotal: totals.baseCommissionTotal,
-        weekendBonusTotal: totals.weekendBonusTotal,
-        advancesDeductionTotal: totals.advancesDeductionTotal,
-        netPayable: totals.netPayable,
-      });
+      const payroll = existing
+        ? await this.payrollRepository.updateDraft(tx, existing.id, totals)
+        : await this.payrollRepository.create(tx, {
+            mesaUserId: mesaUser.id,
+            periodStart: start,
+            periodEnd: end,
+            grossSales: totals.grossSales,
+            baseCommissionTotal: totals.baseCommissionTotal,
+            weekendBonusTotal: totals.weekendBonusTotal,
+            advancesDeductionTotal: totals.advancesDeductionTotal,
+            netPayable: totals.netPayable,
+          });
 
       await this.payrollRepository.linkRegistersAndAdvances(
         tx,
@@ -119,25 +142,34 @@ export class PayrollService {
         totals.advanceIds,
       );
 
-      return payroll;
+      return { payroll, created: !existing };
     });
+
+    await this.notifyPayrollSafe(
+      result.created ? 'generated' : 'updated',
+      result.payroll,
+      actor.id,
+      mesaUserName,
+    );
+
+    return result.payroll;
   }
 
   async closePayroll(
     payrollId: string,
     actor: AuthenticatedUser,
   ): Promise<PayrollResponse> {
-    return this.prisma.$transaction(async (tx) => {
-      const payroll = await this.payrollRepository.findActiveById(
+    const payroll = await this.prisma.$transaction(async (tx) => {
+      const current = await this.payrollRepository.findActiveById(
         tx,
         payrollId,
       );
 
-      if (!payroll) {
+      if (!current) {
         throw new NotFoundException(PAYROLL_ERROR_MESSAGES.PAYROLL_NOT_FOUND);
       }
 
-      if (payroll.status !== PayrollStatus.DRAFT) {
+      if (current.status !== PayrollStatus.DRAFT) {
         throw new BadRequestException(
           PAYROLL_ERROR_MESSAGES.CANNOT_CLOSE_NON_DRAFT,
         );
@@ -145,6 +177,53 @@ export class PayrollService {
 
       return this.payrollRepository.close(tx, payrollId, actor.id);
     });
+
+    await this.notifyPayrollSafe(
+      'closed',
+      payroll,
+      actor.id,
+      payroll.mesaUserName,
+    );
+
+    return payroll;
+  }
+
+  private async notifyPayrollSafe(
+    kind: 'generated' | 'updated' | 'closed',
+    payroll: PayrollResponse,
+    actorId: string,
+    mesaName: string,
+  ): Promise<void> {
+    try {
+      const payload = {
+        actorId,
+        mesaUserId: payroll.mesaUserId,
+        mesaName,
+        netPayable: payroll.netPayable,
+        periodStart: payroll.periodStart,
+        periodEnd: payroll.periodEnd,
+      };
+
+      if (kind === 'generated') {
+        await this.notificationsService.notifyPayrollGenerated(payload);
+        return;
+      }
+
+      if (kind === 'updated') {
+        await this.notificationsService.notifyPayrollDraftUpdated(
+          payroll.mesaUserId,
+        );
+        return;
+      }
+
+      await this.notificationsService.notifyPayrollClosed(payload);
+    } catch (error) {
+      this.logger.warn(
+        `Payroll ${kind} notification failed for ${payroll.id}: ${
+          error instanceof Error ? error.message : 'unknown error'
+        }`,
+      );
+    }
   }
 
   async findAll(
@@ -163,12 +242,20 @@ export class PayrollService {
     actor: AuthenticatedUser,
     query: QueryPayrollDto,
   ): Promise<PaginatedPayrolls> {
-    return this.payrollRepository.findMany({
-      mesaUserId: actor.id,
-      status: query.status,
-      page: query.page ?? 1,
-      limit: query.limit ?? 20,
-    });
+    return this.payrollRepository.findRecentForMesa(actor.id, query.status);
+  }
+
+  async findMineById(
+    actor: AuthenticatedUser,
+    payrollId: string,
+  ): Promise<PayrollDetail> {
+    const detail = await this.payrollRepository.findDetailById(payrollId);
+
+    if (!detail || detail.mesaUserId !== actor.id) {
+      throw new NotFoundException(PAYROLL_ERROR_MESSAGES.PAYROLL_NOT_FOUND);
+    }
+
+    return detail;
   }
 
   private async requireActiveMesaUser(mesaUserId: string): Promise<{

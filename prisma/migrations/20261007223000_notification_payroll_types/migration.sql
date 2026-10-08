@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "NotificationType" ADD VALUE 'PAYROLL_GENERATED';
+ALTER TYPE "NotificationType" ADD VALUE 'PAYROLL_CLOSED';

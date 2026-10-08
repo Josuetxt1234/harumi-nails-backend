@@ -34,8 +34,11 @@ export class PayrollController {
 
   @Post('generate')
   @Permissions(PERMISSIONS.PAYROLL_CREATE)
-  generate(@Body() generatePayrollDto: GeneratePayrollDto) {
-    return this.payrollService.generate(generatePayrollDto);
+  generate(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Body() generatePayrollDto: GeneratePayrollDto,
+  ) {
+    return this.payrollService.generate(generatePayrollDto, actor);
   }
 
   @Get('me')
@@ -45,6 +48,15 @@ export class PayrollController {
     @Query() query: QueryPayrollDto,
   ) {
     return this.payrollService.findMine(actor, query);
+  }
+
+  @Get('me/:id')
+  @Permissions(PERMISSIONS.PAYROLL_READ)
+  findMineById(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.payrollService.findMineById(actor, id);
   }
 
   @Get()

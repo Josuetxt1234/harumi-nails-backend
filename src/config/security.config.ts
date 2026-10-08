@@ -41,15 +41,18 @@ const parseTrustProxy = (): boolean | number | string => {
 };
 
 const parseRefreshCookie = () => {
+  const isProduction = process.env.NODE_ENV === 'production';
   const raw = process.env.COOKIE_SAMESITE?.trim().toLowerCase();
-  const sameSite = raw === 'lax' || raw === 'none' ? raw : 'strict';
+  const explicit =
+    raw === 'strict' || raw === 'lax' || raw === 'none' ? raw : undefined;
+  const sameSite = explicit ?? (isProduction ? 'none' : 'lax');
 
   return {
-    // Browsers drop SameSite=None cookies that are not marked Secure.
+    // SameSite=None is discarded by the browser unless Secure is set.
     secure:
       sameSite === 'none' ||
-      process.env.COOKIE_SECURE?.trim() === 'true' ||
-      process.env.NODE_ENV === 'production',
+      isProduction ||
+      process.env.COOKIE_SECURE?.trim() === 'true',
     sameSite,
     domain: process.env.COOKIE_DOMAIN?.trim() || undefined,
     path: '/api/auth',
